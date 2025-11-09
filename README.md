@@ -1,191 +1,244 @@
-# uht-tooling: Automating the Molecular Biology Accessory to Ultra-High Throughput Screening
+# uht-tooling
+
+Automation helpers for ultra-high-throughput molecular biology workflows. The package ships both a Typer-based CLI and an optional Gradio GUI that wrap the same workflow code paths.
 
 ---
 
-## Getting Started
+## Installation
 
-You will need **conda** installed. Follow the instructions here:
-https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html
-
-Clone the repo into a directory of your choice:
-
+### Quick install (recommended, easiest file maintainance)
 ```bash
-	git clone https://github.com/Matt115A/uht-tooling.git
+python -m pip install "uht-tooling[gui]"
 ```
 
-Navigate to `/uht-tooling/` and run:
+This installs the core workflows plus the optional GUI dependencies (Gradio, pandas). Omit the `[gui]` extras if you only need the CLI:
 
 ```bash
-	chmod +x setup.sh
-	./setup.sh
+python -m pip install uht-tooling
 ```
 
-*Note: This setup.sh file is verified for Mac only. Results may vary on other OS.*
+### Development install
+```bash
+git clone https://github.com/Matt115A/uht-tooling.git
+cd uht-tooling
+python -m pip install -e ".[gui,dev]"
+```
+
+The editable install exposes the latest sources, while the `dev` extras add linting and test tooling.
 
 ---
 
-## General Structure
+## Directory layout
 
-- Configs and data are found in `data/.../`, where `...` depends on the script you wish to run.
-- Results are saved to `results/.../`.
-- All major scripts now generate detailed log files in their respective `results/.../` directories. These logs capture all major steps, errors, and outputs, making it easier to debug and trace your runs.
-
-### Available Commands
-
-- `make nextera_primers`
-- `make umi_hunter`
-- `make design_slim`
-- `make mutation_caller`
-- `make ep-library-profile`
-- `make design_gibson`
-- `make profile_inserts`
-- `make gui` - Launch interactive GUI (optional)
+- Reference inputs live under `data/<workflow>/`.
+- Outputs (CSV, FASTA, plots, logs) are written to `results/<workflow>/`.
+- All workflows log to `results/<workflow>/run.log` for reproducibility and debugging.
 
 ---
 
-## Interactive GUI (Optional)
+## Command-line interface
 
-A web-based GUI is available for convenient interaction with the tools:
+The CLI is exposed as the `uht-tooling` executable. List the available commands:
 
 ```bash
-make gui
+uht-tooling --help
 ```
 
-This will launch a local web interface at `http://127.0.0.1:7860` where you can:
-- Design Nextera primers interactively
-- Design SLIM and Gibson assembly primers
-- Input sequences and mutations directly
-- View results immediately
+Each command mirrors a workflow module. Common entry points:
 
-**Note:** The GUI is optional. All existing command-line workflows continue to work as before. The GUI is a non-destructive wrapper that calls the same underlying scripts.
+| Command | Purpose |
+| --- | --- |
+| `uht-tooling nextera-primers` | Generate Nextera XT primer pairs from a binding-region CSV. |
+| `uht-tooling design-slim` | Design SLIM mutagenesis primers from FASTA/CSV inputs. |
+| `uht-tooling design-gibson` | Produce Gibson mutagenesis primers and assembly plans. |
+| `uht-tooling mutation-caller` | Summarise amino-acid substitutions from long-read FASTQ files. |
+| `uht-tooling umi-hunter` | Cluster UMIs and call consensus alleles. |
+| `uht-tooling ep-library-profile` | Measure mutation rates without UMIs. |
+| `uht-tooling profile-inserts` | Extract inserts defined by probe pairs. |
 
-**Requirements:** Gradio is included in `requirements.txt`. Install with:
+Each command provides detailed help, including option descriptions and expected file formats:
+
 ```bash
-pip install gradio
+uht-tooling mutation-caller --help
 ```
 
----
-
-## Automated Nextera XT Primer Design Software
-
-**One-PCR-to-flowcell workflow**
-
-To use this software:
-1. Upload a `.csv` file in `data/nextera_designer/` called `nextera_designer.csv`. The first column should be called `binding_region`, and the first two rows should be the forward and reverse primers you want to use to generate your Illumina amplicon.
-2. Use normal primer design rules, inputting the sequence in the 5'→3' order (same as if you were ordering primers).
-3. The script is pre-loaded with twelve i5 and twelve i7 indices, allowing up to 144 unique amplicons.
-4. After setting up your conda environment, run `make nextera_primers`. A new `.csv` will appear in `results/nextera_designer/`, ready for ordering.
-
-**Pipeline for kit-free Illumina sample prep:**
-- PCR using an i5/i7 primer pair, monitor a portion of the reaction using qPCR. Cap the cycle number to get only 10% of the final yield (minimises PCR amplification bias).
-- Purify the DNA product, removing primers (important to avoid primer excess on the chip). Use SPRIselect beads from Beckman Coulter. Start with a 0.65:1 bead:DNA volume ratio.
-- Verify primer removal using electrophoresis (e.g., 2100 BioAnalyser and a DNA detection chip).
+You can pass multiple FASTQ paths using repeated `--fastq` options or glob patterns. Optional `--log-path` flags redirect logs if you prefer a location outside the default results directory.
 
 ---
 
-## Profile Inserts: Analyzing Insert Sequences from FASTQ Data
+## Workflow reference
 
-Extract and analyze insert sequences from FASTQ data using upstream and downstream probe sequences:
+### Nextera XT primer design
 
-- Place your `.fastq.gz` file and a `.csv` file with `upstream` and `downstream` columns in `data/profile_inserts/`.
-- Run `make profile_inserts`.
-- The script uses fuzzy matching to find probe sequences (forward and reverse complement).
-- Outputs include extracted inserts in FASTA format, comprehensive QC plots, and detailed metrics.
-- QC metrics include length distribution, GC content, sequence composition, probe performance, and duplicate analysis.
+1. Prepare `data/nextera_designer/nextera_designer.csv` with a `binding_region` column. Row 1 should contain the forward region, row 2 the reverse region, both in 5'→3' orientation.
+2. Optional: supply a YAML overrides file for index lists/prefixes via `--config`.
+3. Run:
+   ```bash
+   uht-tooling nextera-primers \
+     --binding-csv data/nextera_designer/nextera_designer.csv \
+     --output-csv results/nextera_designer/nextera_xt_primers.csv
+   ```
+4. Primer CSVs will be written to `results/nextera_designer/`, accompanied by a log file.
 
-**Features:**
-- Fuzzy matching for probe annealing (configurable threshold)
-- Progress bars for long-running analyses
-- Comprehensive QC plots (12 different visualizations)
-- Detailed logging and error handling
-- Support for multiple probe pairs per CSV
+The helper is preloaded with twelve i5 and twelve i7 indices, enabling up to 144 unique amplicons. Downstream lab workflow suggestions (qPCR monitoring, SPRIselect cleanup) remain unchanged from earlier releases.
+
+#### Wet-lab workflow notes
+
+- Perform the initial amplification with an i5/i7 primer pair and monitor a small aliquot by qPCR. Cap thermocycling early so you only generate ~10% of the theoretical yield—this minimizes amplification bias.
+- Purify the product with SPRIselect beads at approximately a 0.65:1 bead:DNA volume ratio to remove residual primers and short fragments.
+- Confirm primer removal using electrophoresis (e.g., BioAnalyzer DNA chip) before moving to sequencing prep.
+
+### SLIM primer design
+
+- Inputs:
+  - `data/design_slim/slim_template_gene.fasta`
+  - `data/design_slim/slim_context.fasta`
+  - `data/design_slim/slim_target_mutations.csv` (single `mutations` column)
+- Run:
+  ```bash
+  uht-tooling design-slim \
+    --gene-fasta data/design_slim/slim_template_gene.fasta \
+    --context-fasta data/design_slim/slim_context.fasta \
+    --mutations-csv data/design_slim/slim_target_mutations.csv \
+    --output-dir results/design_slim/
+  ```
+- Output: `results/design_slim/SLIM_primers.csv` plus logs.
+
+Mutation nomenclature examples:
+- `A123G` (substitution)
+- `T241Del` (deletion)
+- `T241TS` (insert Ser after Thr241)
+- `L46GP` (replace Leu46 with Gly-Pro)
+
+#### Experimental blueprint
+
+- Hands-on time is approximately three hours (excluding protein purification), with mutant protein obtainable in roughly three days.
+- Conduct two PCRs per mutant set: (A) long forward with short reverse and (B) long reverse with short forward.
+- Combine 10 µL from each PCR with 10 µL H-buffer (150 mM Tris pH 8, 400 mM NaCl, 60 mM EDTA) for a 30 µL annealing reaction: 99 °C for 3 min, then two cycles of 65 °C for 5 min followed by 30 °C for 15 min, hold at 4 °C.
+- Transform directly into NEB 5-alpha or BL21 (DE3) cells without additional cleanup. The protocol has been validated for simultaneous introduction of dozens of mutations.
+
+### Gibson assembly primers
+
+- Inputs mirror the SLIM workflow but use `data/design_gibson/`.
+- Link sub-mutations with `+` to specify multi-mutation assemblies (e.g., `A123G+T150A`).
+- Run:
+  ```bash
+  uht-tooling design-gibson \
+    --gene-fasta data/design_gibson/gibson_template_gene.fasta \
+    --context-fasta data/design_gibson/gibson_context.fasta \
+    --mutations-csv data/design_gibson/gibson_target_mutations.csv \
+    --output-dir results/design_gibson/
+  ```
+- Outputs include primer sets and an assembly-plan CSV.
+
+If mutations fall within overlapping primer windows, design sequential reactions to avoid excessive primer reuse.
+
+### Mutation caller (no UMIs)
+
+1. Supply:
+   - `data/mutation_caller/mutation_caller_template.fasta`
+   - `data/mutation_caller/mutation_caller.csv` with `gene_flanks` and `gene_min_max` columns (two rows each).
+   - One or more FASTQ files via `--fastq`.
+2. Run:
+   ```bash
+   uht-tooling mutation-caller \
+     --template-fasta data/mutation_caller/mutation_caller_template.fasta \
+     --flanks-csv data/mutation_caller/mutation_caller.csv \
+     --fastq data/mutation_caller/*.fastq.gz \
+     --output-dir results/mutation_caller/ \
+     --threshold 10
+   ```
+3. Outputs: per-sample subdirectories with substitution summaries, co-occurrence matrices, and logs.
+
+### UMI Hunter
+
+- Inputs: `data/umi_hunter/template.fasta`, `data/umi_hunter/umi_hunter.csv`, and FASTQ reads.
+- Command:
+  ```bash
+  uht-tooling umi-hunter \
+    --template-fasta data/umi_hunter/template.fasta \
+    --config-csv data/umi_hunter/umi_hunter.csv \
+    --fastq data/umi_hunter/*.fastq.gz \
+    --output-dir results/umi_hunter/
+  ```
+- Tunable parameters include `--umi-identity-threshold` and `--consensus-mutation-threshold`.
+
+### Profile inserts
+
+- Prepare `data/profile_inserts/sample_probes.csv` with `upstream` and `downstream` columns.
+- Run:
+  ```bash
+  uht-tooling profile-inserts \
+    --probes-csv data/profile_inserts/sample_probes.csv \
+    --fastq data/profile_inserts/*.fastq.gz \
+    --output-dir results/profile_inserts/
+  ```
+- Outputs: extracted insert FASTA files, QC plots, metrics, and logs. Adjust fuzzy matching strictness via `--min-ratio`.
+
+### EP library profiler (no UMIs)
+
+- Inputs:
+  - `data/ep-library-profile/region_of_interest.fasta`
+  - `data/ep-library-profile/plasmid.fasta`
+  - FASTQ inputs (`--fastq` accepts multiple files)
+- Run:
+  ```bash
+  uht-tooling ep-library-profile \
+    --region-fasta data/ep-library-profile/region_of_interest.fasta \
+    --plasmid-fasta data/ep-library-profile/plasmid.fasta \
+    --fastq data/ep-library-profile/*.fastq.gz \
+    --output-dir results/ep-library-profile/
+  ```
+- Output bundle includes per-sample directories and a master summary TSV.
 
 ---
 
-## Identifying, Counting, and Generating Consensus UMI-Gene Pairings
+## GUI quick start (optional)
 
-For long-read sequencing libraries tagged with UMIs:
-- Place your `.fastq.gz` files in `data/umi_hunter/` along with a gene template (`template.fasta`) and a configuration file `umi_hunter.csv`.
-- The script outputs UMI-gene clusters, their counts, and consensus genes for clusters with >10 representatives to `results/umi_hunter/`.
-- By default, the script clusters at 90% UMI identity.
+The Gradio GUI wraps the same workflows with upload widgets and result previews. Launch it directly:
 
----
+```bash
+python -m uht_tooling.workflows.gui
+```
 
-## Identifying and Counting Mutants from Long-Read Data Without UMIs
+Key points:
+- The server binds to `http://127.0.0.1:7860` by default and falls back to an available port if 7860 is busy. Copy http://127.0.0.1:7860 into your browser.
+- Temporary working directories are created under the system temp folder and cleaned automatically.
+- Output archives (ZIP files) mirror the directory structure produced by the CLI.
 
-- Save your gene reference (coding sequence only) in `data/mutation_caller/mutation_caller_template.fasta`.
-- Place your `.fastq.gz` file in `data/mutation_caller/` and place a .csv file there too called mutation_caller.csv
-- mutation_caller.csv should have two columns: one being gene_flanks and the second being gene_min_max. The first row of gene_flanks should be a 8-12bp region directly upstream of the GOI, and the second row should be the same immediately downstream. The first row of gene_min_max should be the min length of a valid gene, and the second should be the maximum length of a valid gene.
-- Run `make mutation_caller`.
-- The script outputs mutation counts and co-occurrence data to `results/mutation_caller/`.
+### Tabs and capabilities
 
----
+1. **Nextera XT** – forward/reverse primer inputs with CSV preview.
+2. **SLIM** – template/context FASTA text areas plus mutation list.
+3. **Gibson** – multi-mutation support using `+` syntax.
+4. **Mutation Caller** – upload FASTQ, template FASTA, and configuration CSV.
+5. **UMI Hunter** – long-read UMI clustering with configurable thresholds.
+6. **Profile Inserts** – probe CSV and multiple FASTQ uploads.
+7. **EP Library Profile** – FASTQ uploads plus plasmid and region FASTA inputs.
 
-## Making Mutant Proteins with SLIM
+### Workflow tips
 
+- For large FASTQ datasets, the CLI remains the most efficient option (especially for automation or batch processing).
+- Use the command-line flag `--share` in `python -m uht_tooling.workflows.gui` if you need to expose the GUI outside localhost.
 
-- This is a quick tool to design primers for SLIM cloning, which can add mutations to specific spots in a protein with overnight ease.
-- Add your gene template (coding sequence only) to `data/design_slim/slim_template_gene.fasta` and your whole plasmid to `data/design_slim/slim_context.fasta`.
-- Specify mutants in `data/design_slim/slim_target_mutations.csv` (first column: `mutations`).
-- The script outputs designed primers to `results/design_slim/SLIM_primers.csv`.
+### Troubleshooting
 
-**Mutation Nomenclature Examples:**
-- Substitution: `A123G`
-- Deletion: `T241Del`
-- InDel (inter-codon): `T241InDelA242S`
-- Insertion after codon: `T241TS` (insert Ser after Thr241)
-- Codon replacement insertion: `L46GP` (replace Leu46 with Gly-Pro)
-
-**Experimental:**
-Total time:
-~ 3h hands-on (not inc. protein purification), 72h DNA -> pure mutant protein
-
-Contributions:
-2x PCRs (~2h + 10 mins setup), SLIM thermocycling (50 mins), transformation (30 mins setup + overnight incubation), colony growth (5 mins hands-on, 12 h growth), DNA recovery (important for validation, 30 mins hands-on), protein expression and purification (2x overnight)
-
-SLIM protocol:
-Once you have the primers, run two normal PCRs using (A) long fwd + short rvs and (B) long rvs + short fwd. You can then add 10 ul of each PCR product to 10 ul of H-buffer, composed of 150 mM Tris pH 8, 400 mM NaCl and 60 mM EDTA. Incubate this (total volume 30 ul) in a thermocycler using the following protocol: 99 oC, 3:00 -> 2x [65 oC, 5:00 -> 30 oC, 15:00] -> Hold at 4 oC. You may then transform either NEB 5a or BL21 (DE3) with this mixture without further purification.
-
-This code has been experimentally validated for simultaneous cloning of tens of mutants.
----
-
-## Making Mutant Proteins with Gibson Assembly
-
-- Add your gene template (coding sequence only) to `data/design_gibson/gibson_template_gene.fasta` and your whole plasmid to `data/design_gibson/gibson_context.fasta`.
-- Specify mutants in `data/design_gibson/gibson_target_mutations.csv` (first column: `mutations`).
-- The script outputs designed primers and an assembly plan to `results/design_gibson/`.
-- Multi-mutants can be specified by adding a `+` between mutations in one cell of the `.csv` file.
-
-**Mutation Nomenclature Examples:**
-- Substitution: `A123G`
-- Deletion: `T241Del`
-- InDel (inter-codon): `T241InDelA242S`
-- Insertion after codon: `T241TS` (insert Ser after Thr241)
-- Codon replacement insertion: `L46GP` (replace Leu46 with Gly-Pro)
-
-*Note: If target mutations are too close together and primer regions would overlap, run the reaction sequentially to incorporate multi-mutations.*
-
----
-
-## ep-library-profile: Profiling a DNA Library Without UMI Dependence
-
-- Place `.fastq.gz` files in `/data/ep-library-profile/`.
-- Provide the mutational region of interest (`/data/ep-library-profile/region_of_interest.fasta`) and the whole plasmid (`/data/ep-library-profile/plasmid.fasta`).
-- Run `make ep-library-profile`.
-- Outputs include coverage, mutation rate, spectrum, and associated error, all saved in `results/ep-library-profile/` along with a log file.
+- **Port already bound:** the launcher automatically selects the next free port and logs the chosen URL.
+- **Missing dependency:** ensure you installed with `pip install "uht-tooling[gui]"`.
+- **Stopping the server:** press `Ctrl+C` in the terminal session running the GUI.
 
 ---
 
 ## Logging
 
-All major scripts generate detailed log files in their respective `results/.../` directories. These logs capture all major steps, errors, and outputs, making it easier to debug and trace your runs.
+Every workflow configures logging to the destination output directory. Inspect `run.log` for command echoes, parameter choices, and any warnings produced during execution. When providing bug reports, include this log file along with input metadata to streamline triage.
 
 ---
 
-## Coming Soon
+## Roadmap
 
-- Primer design for KLD cloning of mutants
-- Expansion of all primer design software for multi-mutations
-- Expansion of mutation caller to handle indels
+- Replace deprecated Biopython command-line wrappers with native subprocess implementations.
+- Expand CLI coverage to any remaining legacy scripts that are still invoked via `make`.
+- Add documentation for automation pipelines and integrate continuous integration tests.
 
-
+Contributions in the form of bug reports, pull requests, or feature suggestions are welcome. File issues on GitHub with clear reproduction steps and sample data when possible.
