@@ -1,6 +1,6 @@
 # uht-tooling
 
-Automation helpers for ultra-high-throughput molecular biology workflows. The package ships both a Typer-based CLI and an optional Gradio GUI that wrap the same workflow code paths.
+Automation helpers for ultra-high-throughput molecular biology workflows. The package ships both a CLI and an optional GUI that wrap the same workflow code paths.
 
 ---
 
@@ -20,8 +20,8 @@ pip install uht-tooling
 
 ### Development install
 ```bash
-git clone https://github.com/Matt115A/uht-tooling-package.git
-cd uht-tooling-package
+git clone https://github.com/Matt115A/uht-tooling-packaged.git
+cd uht-tooling-packaged
 python -m pip install -e ".[gui,dev]"
 ```
 
