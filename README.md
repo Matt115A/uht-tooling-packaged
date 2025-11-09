@@ -8,7 +8,10 @@ Automation helpers for ultra-high-throughput molecular biology workflows. The pa
 
 ### Quick install (recommended, easiest file maintainance)
 ```bash
-python -m pip install "uht-tooling[gui]"
+python -m pip install \
+     --index-url https://test.pypi.org/simple \
+     --extra-index-url https://pypi.org/simple \
+     "uht-tooling[gui]==0.1.2"
 ```
 
 This installs the core workflows plus the optional GUI dependencies (Gradio, pandas). Omit the `[gui]` extras if you only need the CLI:
