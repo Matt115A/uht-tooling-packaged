@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import math
 import tempfile
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # Use a built-in Matplotlib style ("ggplot") for consistency
 plt.style.use("ggplot")
@@ -505,94 +505,153 @@ def run_qc_analysis(fastq_path, results_dir, ref_hit_fasta, plasmid_fasta):
             else:
                 logging.warning(f"Failed to calculate mutation rate for quality threshold {q_threshold}")
         
-        # Find optimal Q-score threshold (lowest empirical error)
-        optimal_qscore, optimal_result = find_optimal_qscore_simple(qc_results)
+        # Derive consensus AA mutation estimates across valid Q-score thresholds
+        consensus_info, _ = compute_consensus_aa_mutation(qc_results)
         
         # Create QC plots
         if len(qc_results) >= 2:
-            create_simple_qc_plots(successful_thresholds, qc_results, results_dir, optimal_qscore, optimal_result)
+            create_simple_qc_plots(
+                successful_thresholds,
+                qc_results,
+                results_dir,
+                consensus_info=consensus_info,
+            )
         else:
             logging.warning("Insufficient data points for QC plots (need at least 2)")
         
-        # Save optimal Q-score information
-        if optimal_qscore is not None:
-            optimal_qscore_path = os.path.join(results_dir, "optimal_qscore_analysis.txt")
-            with open(optimal_qscore_path, 'w') as f:
-                f.write("=== OPTIMAL Q-SCORE ANALYSIS (PRECISION-WEIGHTED) ===\n")
-                f.write(f"Optimal Q-score threshold: {optimal_qscore}\n")
-                f.write(f"Precision-weighted score: {(1.0 / optimal_result['std_aa_mutations']) * optimal_qscore:.6f}\n" if optimal_result['std_aa_mutations'] > 0 else "Precision-weighted score: inf (perfect precision)\n")
-                f.write(f"Empirical error (std): {optimal_result['std_aa_mutations']:.6f}\n")
-                f.write(f"AA mutations per gene: {optimal_result['mean_aa_mutations']:.4f} ± {optimal_result['std_aa_mutations']:.4f}\n")
-                f.write(f"95% Confidence Interval: [{optimal_result['ci_lower']:.4f}, {optimal_result['ci_upper']:.4f}]\n")
-                f.write(f"Total mappable bases: {optimal_result['total_mappable_bases']}\n")
-                f.write(f"Number of segments: {optimal_result['n_segments']}\n")
-                f.write("\n=== ALL Q-SCORE COMPARISON ===\n")
-                f.write("Q-score\tEmpirical_Error\tPrecision_Score\tMappable_Bases\tAA_Mutations\tCI_Lower\tCI_Upper\n")
-                for result in qc_results:
-                    precision_score = (1.0 / result['std_aa_mutations']) * result['quality_threshold'] if result['std_aa_mutations'] > 0 else float('inf')
-                    f.write(f"{result['quality_threshold']}\t{result['std_aa_mutations']:.6f}\t{precision_score:.6f}\t{result['total_mappable_bases']}\t{result['mean_aa_mutations']:.4f}\t{result['ci_lower']:.4f}\t{result['ci_upper']:.4f}\n")
-            
-            logging.info(f"Optimal Q-score analysis saved to: {optimal_qscore_path}")
+        # Save consensus summary
+        consensus_summary_path = os.path.join(results_dir, "aa_mutation_consensus.txt")
+        with open(consensus_summary_path, "w") as f:
+            f.write("=== CONSENSUS AMINO-ACID MUTATION ESTIMATE ===\n")
+            if consensus_info:
+                f.write(f"Minimum mappable bases required: {consensus_info['min_mappable_bases']}\n")
+                f.write(
+                    f"Consensus AA mutations per gene: {consensus_info['consensus_mean']:.4f} ± "
+                    f"{consensus_info['consensus_std']:.4f}\n"
+                )
+                f.write(f"Thresholds contributing: {consensus_info['thresholds_used']}\n")
+                f.write(f"Normalized weights: {consensus_info['weights']}\n")
+                if consensus_info.get("note"):
+                    f.write(f"Note: {consensus_info['note']}\n")
+            else:
+                f.write("Consensus AA mutation rate could not be computed; see QC logs for details.\n")
+            f.write("\n=== ALL Q-SCORE RESULTS ===\n")
+            f.write(
+                "Q-score\tMean_AA\tStd_AA\tCI_Lower\tCI_Upper\tMappable_Bases\tSegments\n"
+            )
+            for result in qc_results:
+                f.write(
+                    f"{result['quality_threshold']}\t"
+                    f"{result['mean_aa_mutations']:.6f}\t"
+                    f"{result['std_aa_mutations']:.6f}\t"
+                    f"{result['ci_lower']:.6f}\t"
+                    f"{result['ci_upper']:.6f}\t"
+                    f"{result['total_mappable_bases']}\t"
+                    f"{result['n_segments']}\n"
+                )
+        logging.info("Consensus AA mutation summary saved to: %s", consensus_summary_path)
         
         # Clean up segment files
-        import shutil
         segment_dir = os.path.dirname(segment_files[0])
         if os.path.exists(segment_dir):
             shutil.rmtree(segment_dir)
             logging.info(f"Cleaned up segment directory: {segment_dir}")
         
-        # Return both QC results and optimal Q-score for use in main analysis
-        return qc_results, optimal_qscore
+        # Return QC results and consensus information for downstream analysis
+        return qc_results, consensus_info
 
-def find_optimal_qscore_simple(qc_results):
+def compute_consensus_aa_mutation(
+    qc_results: List[dict],
+    min_mappable_bases: int = 1000,
+) -> Tuple[Optional[dict], List[dict]]:
     """
-    Find the Q-score threshold with the highest precision-weighted score.
-    Precision-weighted score = (1 / standard_deviation) * q_score
-    
-    Args:
-        qc_results: List of segmentation analysis results
-    
+    Derive a consensus amino-acid mutation estimate across Q-score thresholds.
+
+    Each threshold must meet a minimum coverage requirement. The consensus is a
+    precision-weighted average (weights = 1 / std_aa_mutations).
+
     Returns:
-        tuple: (optimal_qscore, optimal_result)
+        consensus_info (dict or None)
+            {
+                'consensus_mean': float,
+                'consensus_std': float,
+                'thresholds_used': List[int],
+                'weights': List[float],
+                'min_mappable_bases': int,
+            }
+        valid_results: list of QC result dicts that were included in the consensus
     """
-    logging.info("=== FINDING OPTIMAL Q-SCORE THRESHOLD (PRECISION-WEIGHTED) ===")
-    
     if not qc_results:
-        return None, None
-    
-    # Find Q-score with highest precision-weighted score
-    max_score = -1
-    optimal_result = None
-    optimal_qscore = None
-    
-    logging.info("Q-score\tEmpirical_Error\tPrecision_Score\tMappable_Bases")
-    logging.info("-" * 60)
-    
-    for result in qc_results:
-        qscore = result['quality_threshold']
-        empirical_error = result['std_aa_mutations']
-        mappable_bases = result['total_mappable_bases']
-        
-        # Calculate precision-weighted score: (1/sd) * q_score
-        if empirical_error > 0:
-            precision_score = (1.0 / empirical_error) * qscore
-        else:
-            precision_score = float('inf')  # Perfect precision
-        
-        logging.info(f"Q{qscore}\t{empirical_error:.6f}\t{precision_score:.6f}\t{mappable_bases}")
-        
-        if precision_score > max_score:
-            max_score = precision_score
-            optimal_result = result
-            optimal_qscore = qscore
-    
-    logging.info("-" * 60)
-    logging.info(f"OPTIMAL Q-SCORE: Q{optimal_qscore} (highest precision-weighted score: {max_score:.6f})")
-    logging.info(f"Optimal result: AA mutations = {optimal_result['mean_aa_mutations']:.4f} ± {optimal_result['std_aa_mutations']:.4f}")
-    
-    return optimal_qscore, optimal_result
+        return None, []
 
-def create_simple_qc_plots(quality_thresholds, qc_results, results_dir, optimal_qscore=None, optimal_result=None):
+    valid_results = []
+    for result in qc_results:
+        total_bases = result.get("total_mappable_bases", 0)
+        std_aa = result.get("std_aa_mutations", 0.0)
+        if total_bases is None:
+            total_bases = 0
+        if total_bases >= min_mappable_bases and std_aa is not None:
+            valid_results.append(result)
+
+    if not valid_results:
+        logging.warning(
+            "No Q-score thresholds met the minimum mappable base requirement (%s). "
+            "Consensus AA mutation rate will fall back to the threshold with the highest coverage.",
+            min_mappable_bases,
+        )
+        best_by_coverage = max(qc_results, key=lambda r: r.get("total_mappable_bases", 0))
+        fallback_std = best_by_coverage.get("std_aa_mutations", 0.0)
+        consensus_info = {
+            "consensus_mean": best_by_coverage.get("mean_aa_mutations", 0.0),
+            "consensus_std": fallback_std,
+            "thresholds_used": [best_by_coverage.get("quality_threshold")],
+            "weights": [1.0],
+            "min_mappable_bases": min_mappable_bases,
+            "note": "FELL_BACK_TO_MAX_COVERAGE",
+        }
+        return consensus_info, [best_by_coverage]
+
+    weights = []
+    means = []
+    variances = []
+    thresholds = []
+    for result in valid_results:
+        std_aa = result.get("std_aa_mutations", 0.0) or 0.0
+        weight = 1.0 / max(std_aa, 1e-9)  # Avoid division by zero; effectively a very large weight.
+        weights.append(weight)
+        means.append(result.get("mean_aa_mutations", 0.0))
+        variances.append(std_aa**2)
+        thresholds.append(result.get("quality_threshold"))
+
+    weight_sum = float(np.sum(weights))
+    normalized_weights = [w / weight_sum for w in weights]
+    consensus_mean = float(np.sum(np.array(normalized_weights) * np.array(means)))
+
+    combined_variance = 0.0
+    for w, mean, var in zip(normalized_weights, means, variances):
+        combined_variance += w * (var + (mean - consensus_mean) ** 2)
+    combined_variance = max(combined_variance, 0.0)
+    consensus_std = float(np.sqrt(combined_variance))
+
+    consensus_info = {
+        "consensus_mean": consensus_mean,
+        "consensus_std": consensus_std,
+        "thresholds_used": thresholds,
+        "weights": normalized_weights,
+        "min_mappable_bases": min_mappable_bases,
+        "note": "WEIGHTED_AVERAGE",
+    }
+
+    logging.info(
+        "Consensus AA mutation estimate: %.4f ± %.4f (thresholds used: %s)",
+        consensus_mean,
+        consensus_std,
+        thresholds,
+    )
+
+    return consensus_info, valid_results
+
+def create_simple_qc_plots(quality_thresholds, qc_results, results_dir, consensus_info=None):
     """
     Create simple QC plots with empirical error bars.
     
@@ -600,8 +659,7 @@ def create_simple_qc_plots(quality_thresholds, qc_results, results_dir, optimal_
         quality_thresholds: List of quality score thresholds
         qc_results: List of segmentation analysis results
         results_dir: Directory to save the plots
-        optimal_qscore: Optimal Q-score threshold (optional)
-        optimal_result: Optimal result data (optional)
+        consensus_info: Optional dict describing the consensus AA mutation estimate.
     """
     try:
         # Extract data for plotting
@@ -624,10 +682,17 @@ def create_simple_qc_plots(quality_thresholds, qc_results, results_dir, optimal_
         ax1.fill_between(quality_thresholds, aa_ci_lower, aa_ci_upper, 
                         alpha=0.3, color=color1, label='95% Confidence Interval')
         
-        # Highlight optimal Q-score
-        if optimal_qscore is not None:
-            ax1.axvline(x=optimal_qscore, color='red', linestyle='--', alpha=0.7, 
-                       label=f'Optimal Q{optimal_qscore}')
+        # Add consensus AA mutation estimate if available
+        if consensus_info and consensus_info.get("consensus_mean") is not None:
+            consensus_mean = consensus_info["consensus_mean"]
+            consensus_std = consensus_info.get("consensus_std", 0.0)
+            ax1.axhline(
+                y=consensus_mean,
+                color='red',
+                linestyle='--',
+                alpha=0.7,
+                label=f"Consensus AA mutations ({consensus_mean:.3f}±{consensus_std:.3f})",
+            )
         
         ax1.set_xlabel('Quality Score Threshold', fontsize=12, fontweight='bold')
         ax1.set_ylabel('Estimated AA Mutations per Gene', fontsize=12, fontweight='bold', color=color1)
@@ -1185,16 +1250,23 @@ def run_segmented_analysis(segment_files, quality_threshold, work_dir, ref_hit_f
             bg_rate = bg_mis / bg_cov if bg_cov > 0 else 0
             net_rate = max(hit_rate - bg_rate, 0.0)
             
-            # Calculate AA mutations per gene (simplified)
+            # Calculate AA mutations per gene via Monte Carlo simulation
             lambda_bp = net_rate * len(hit_seq)
-            aa_mutations = lambda_bp / 3.0  # Approximate: 3 bp per AA
+            aa_samples = simulate_aa_distribution(lambda_bp, hit_seq, n_trials=500)
+            if len(aa_samples) > 1:
+                aa_mean = float(np.mean(aa_samples))
+                aa_var = float(np.var(aa_samples, ddof=1))
+            else:
+                aa_mean = float(aa_samples[0]) if aa_samples else 0.0
+                aa_var = 0.0
             
             segment_results.append({
                 'segment': i+1,
                 'hit_rate': hit_rate,
                 'bg_rate': bg_rate,
                 'net_rate': net_rate,
-                'aa_mutations': aa_mutations,
+                'aa_mutations': aa_mean,
+                'aa_variance': aa_var,
                 'mappable_bases': hit_cov,
                 'hit_mismatches': hit_mis,
                 'hit_coverage': hit_cov
@@ -1204,28 +1276,43 @@ def run_segmented_analysis(segment_files, quality_threshold, work_dir, ref_hit_f
             return None
         
         # Calculate empirical statistics
-        aa_mutations_list = [r['aa_mutations'] for r in segment_results]
-        net_rates_list = [r['net_rate'] for r in segment_results]
-        mappable_bases_list = [r['mappable_bases'] for r in segment_results]
+        aa_mutations_list = np.array([r['aa_mutations'] for r in segment_results], dtype=float)
+        aa_variances = np.array([r.get('aa_variance', 0.0) for r in segment_results], dtype=float)
+        net_rates_list = np.array([r['net_rate'] for r in segment_results], dtype=float)
+        mappable_bases_list = np.array([r['mappable_bases'] for r in segment_results], dtype=float)
         
-        mean_aa = np.mean(aa_mutations_list)
-        std_aa = np.std(aa_mutations_list, ddof=1)  # Sample standard deviation
-        mean_net_rate = np.mean(net_rates_list)
-        std_net_rate = np.std(net_rates_list, ddof=1)
-        total_mappable_bases = sum(mappable_bases_list)
+        total_mappable_bases = float(mappable_bases_list.sum())
+        if total_mappable_bases > 0:
+            weights = mappable_bases_list
+            mean_aa = float(np.average(aa_mutations_list, weights=weights))
+            mean_net_rate = float(np.average(net_rates_list, weights=weights))
+            weighted_var = float(
+                np.sum(weights * (aa_variances + (aa_mutations_list - mean_aa) ** 2)) / total_mappable_bases
+            )
+            weighted_net_var = float(
+                np.sum(weights * ( (net_rates_list - mean_net_rate) ** 2 )) / total_mappable_bases
+            )
+        else:
+            weights = None
+            mean_aa = float(np.mean(aa_mutations_list))
+            mean_net_rate = float(np.mean(net_rates_list))
+            weighted_var = float(np.var(aa_mutations_list, ddof=1)) if len(aa_mutations_list) > 1 else 0.0
+            weighted_net_var = float(np.var(net_rates_list, ddof=1)) if len(net_rates_list) > 1 else 0.0
+        
+        std_aa = float(np.sqrt(max(weighted_var, 0.0)))
+        std_net_rate = float(np.sqrt(max(weighted_net_var, 0.0)))
         
         # Calculate confidence interval using t-distribution
         n_segments = len(segment_results)
         if n_segments > 1:
-            # 95% confidence interval
-            from scipy.stats import t
-            t_val = t.ppf(0.975, n_segments - 1)
             se_aa = std_aa / np.sqrt(n_segments)
-            ci_lower = mean_aa - t_val * se_aa
-            ci_upper = mean_aa + t_val * se_aa
+            ci_lower = mean_aa - 1.96 * se_aa
+            ci_upper = mean_aa + 1.96 * se_aa
         else:
             ci_lower = mean_aa
             ci_upper = mean_aa
+        
+        ci_lower = max(ci_lower, 0.0)
         
         return {
             'mean_aa_mutations': mean_aa,
@@ -2072,18 +2159,23 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
             ax3.bar(unique_vals, [1.0], color="#C44E52", alpha=0.7, width=0.1)
             ax3.set_xlim(unique_vals[0] - 0.5, unique_vals[0] + 0.5)
     else:
-        # Not protein or no AA differences
-        ax3.text(0.5, 0.5, "Not a protein‐coding region", 
-                 horizontalalignment='center', verticalalignment='center', 
-                 fontsize=12, color='gray', transform=ax3.transAxes)
-        
-        ax3.set_title("AA Mutation Distribution", fontsize=14, fontweight='bold')
-        ax3.set_xlabel("Number of AA Mutations", fontsize=12)
-        ax3.set_ylabel("Density", fontsize=12)
-        ax3.spines['top'].set_visible(False)
-        ax3.spines['right'].set_visible(False)
-        ax3.set_xticks([])
-        ax3.set_yticks([])
+        # Not protein or no AA differences — display an informative message
+        ax3.text(
+            0.5,
+            0.5,
+            "Amino-acid distribution unavailable",
+            horizontalalignment="center",
+            verticalalignment="center",
+            fontsize=12,
+            color="gray",
+            transform=ax3.transAxes,
+        )
+    
+    ax3.set_title("AA Mutation Distribution", fontsize=14, fontweight='bold')
+    ax3.set_xlabel("Number of AA Mutations", fontsize=12)
+    ax3.set_ylabel("Density", fontsize=12)
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
 
     # Save the combined figure as both PNG and PDF
     panel_path_png = os.path.join(qscore_results_dir, "summary_panels.png")
@@ -2412,7 +2504,7 @@ def process_single_fastq(
     logging.info("Running QC analysis to get Q-score results...")
     qc_results = None
     try:
-        qc_results, optimal_qscore = run_qc_analysis(
+        qc_results, consensus_info = run_qc_analysis(
             str(fastq_path),
             str(results_dir),
             str(region_fasta),
@@ -2420,8 +2512,13 @@ def process_single_fastq(
         )
         if qc_results is not None:
             logging.info("QC analysis completed successfully. Found %s Q-score results.", len(qc_results))
-            if optimal_qscore is not None:
-                logging.info("Optimal Q-score determined: %s", optimal_qscore)
+            if consensus_info and consensus_info.get("consensus_mean") is not None:
+                logging.info(
+                    "Consensus AA mutations per gene: %.4f ± %.4f (thresholds used: %s)",
+                    consensus_info["consensus_mean"],
+                    consensus_info.get("consensus_std", 0.0),
+                    consensus_info.get("thresholds_used"),
+                )
         else:
             logging.warning("QC analysis completed but no Q-score results found.")
     except Exception as exc:

@@ -8,7 +8,7 @@ Automation helpers for ultra-high-throughput molecular biology workflows. The pa
 
 ### Quick install (recommended, easiest file maintainance)
 ```bash
-pip install "uht-tooling[gui]==0.1.3"
+pip install "uht-tooling[gui]==0.1.4"
 
 ```
 
@@ -195,7 +195,14 @@ Please be aware, this toolkit will not scale well beyond around 50k reads/sample
     --fastq data/ep-library-profile/*.fastq.gz \
     --output-dir results/ep-library-profile/
   ```
-- Output bundle includes per-sample directories and a master summary TSV.
+- Output bundle includes per-sample directories, a master summary TSV, and a `summary_panels` figure that visualises positional mutation rates, coverage, and amino-acid simulations.
+
+**How the mutation rate and AA expectations are derived**
+
+1. Reads are aligned to both the region of interest and the full plasmid. Mismatches in the region define the “target” rate; mismatches elsewhere provide the background.
+2. The per-base background rate is subtracted from the target rate to yield a net nucleotide mutation rate, and the standard deviation reflects binomial sampling and quality-score uncertainty.
+3. The net rate is multiplied by the CDS length to estimate λ_bp (mutations per copy). Monte Carlo simulations then flip random bases, translate the mutated CDS, and count amino-acid differences across 1,000 trials—these drives the AA mutation mean/variance that appear in the panel plot.
+4. If multiple Q-score thresholds are analysed, the CLI aggregates them via a precision-weighted consensus (1 / standard deviation weighting) after filtering out thresholds with insufficient coverage; the consensus value is written to `aa_mutation_consensus.txt` and plotted as a horizontal guide.
 
 ---
 
