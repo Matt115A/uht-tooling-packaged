@@ -21,7 +21,7 @@ pip install -r requirements.txt
 echo "[4/5] Installing accessories..."
 conda install --yes -c bioconda mafft
 conda install --yes -c bioconda minimap2
-conda install --yes -c bioconda nanofilt
+conda install --yes -c bioconda NanoFilt
 
 echo "[5/5] Setup complete!"
 echo ""

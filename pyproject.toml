@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uht-tooling"
+version = "0.1.0"
+description = "Tooling for ultra-high throughput screening workflows."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Matt115A" }]
+dependencies = [
+    "biopython",
+    "fuzzywuzzy",
+    "matplotlib",
+    "pandas",
+    "python-Levenshtein",
+    "pyyaml",
+    "pysam",
+    "scipy",
+    "seaborn",
+    "tqdm",
+    "typer>=0.9,<1.0",
+]
+
+[project.optional-dependencies]
+gui = ["gradio"]
+dev = ["pytest", "black", "ruff"]
+
+[project.scripts]
+uht-tooling = "uht_tooling.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
