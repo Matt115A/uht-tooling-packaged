@@ -18,6 +18,7 @@ from uht_tooling.workflows.umi_hunter import (
     expand_fastq_inputs as expand_fastq_inputs_umi,
     run_umi_hunter,
 )
+from uht_tooling.workflows.gui import launch_gui
 
 app = typer.Typer(help="Command-line interface for the uht-tooling package.")
 
@@ -355,9 +356,34 @@ def profile_inserts_command(
             typer.echo(f"  Sample {entry['sample']}: {entry['directory']}")
 
 
-@app.command("gui", help="Launch the graphical interface (currently under refactor).")
-def gui_command():
-    raise NotImplementedError("The GUI is being updated to work with user-specified data directories.")
+@app.command("gui", help="Launch the graphical interface.")
+def gui_command(
+    server_name: str = typer.Option(
+        "127.0.0.1",
+        "--server-name",
+        "-n",
+        help="Hostname or IP address to bind the GUI server.",
+    ),
+    server_port: Optional[int] = typer.Option(
+        7860,
+        "--server-port",
+        "-p",
+        help="Preferred port for the GUI (falls back automatically if unavailable).",
+    ),
+    share: bool = typer.Option(
+        False,
+        "--share",
+        help="Enable Gradio's public sharing tunnel (requires network access).",
+    ),
+):
+    """Launch the Gradio GUI."""
+    try:
+        launch_gui(server_name=server_name, server_port=server_port, share=share)
+    except KeyboardInterrupt:
+        typer.echo("GUI stopped by user.")
+    except Exception as exc:
+        typer.echo(f"Failed to start GUI: {exc}")
+        raise typer.Exit(1)
 
 
 def main():

@@ -8,22 +8,20 @@ Automation helpers for ultra-high-throughput molecular biology workflows. The pa
 
 ### Quick install (recommended, easiest file maintainance)
 ```bash
-python -m pip install \
-     --index-url https://test.pypi.org/simple \
-     --extra-index-url https://pypi.org/simple \
-     "uht-tooling[gui]==0.1.2"
+pip install "uht-tooling[gui]==0.1.3"
+
 ```
 
 This installs the core workflows plus the optional GUI dependencies (Gradio, pandas). Omit the `[gui]` extras if you only need the CLI:
 
 ```bash
-python -m pip install uht-tooling
+pip install uht-tooling
 ```
 
 ### Development install
 ```bash
-git clone https://github.com/Matt115A/uht-tooling.git
-cd uht-tooling
+git clone https://github.com/Matt115A/uht-tooling-package.git
+cd uht-tooling-package
 python -m pip install -e ".[gui,dev]"
 ```
 
@@ -33,7 +31,7 @@ The editable install exposes the latest sources, while the `dev` extras add lint
 
 ## Directory layout
 
-- Reference inputs live under `data/<workflow>/`.
+- Reference inputs can be found anywhere (you specify in the cli), but we recommend using `data/<workflow>/`.
 - Outputs (CSV, FASTA, plots, logs) are written to `results/<workflow>/`.
 - All workflows log to `results/<workflow>/run.log` for reproducibility and debugging.
 
@@ -55,9 +53,9 @@ Each command mirrors a workflow module. Common entry points:
 | `uht-tooling design-slim` | Design SLIM mutagenesis primers from FASTA/CSV inputs. |
 | `uht-tooling design-gibson` | Produce Gibson mutagenesis primers and assembly plans. |
 | `uht-tooling mutation-caller` | Summarise amino-acid substitutions from long-read FASTQ files. |
-| `uht-tooling umi-hunter` | Cluster UMIs and call consensus alleles. |
-| `uht-tooling ep-library-profile` | Measure mutation rates without UMIs. |
-| `uht-tooling profile-inserts` | Extract inserts defined by probe pairs. |
+| `uht-tooling umi-hunter` | Cluster UMIs and call consensus genes. |
+| `uht-tooling ep-library-profile` | Measure mutation rates in plasmid libraries without UMIs. |
+| `uht-tooling profile-inserts` | Extract and analyse inserts defined by flanking probe pairs. |
 
 Each command provides detailed help, including option descriptions and expected file formats:
 
@@ -83,13 +81,13 @@ You can pass multiple FASTQ paths using repeated `--fastq` options or glob patte
    ```
 4. Primer CSVs will be written to `results/nextera_designer/`, accompanied by a log file.
 
-The helper is preloaded with twelve i5 and twelve i7 indices, enabling up to 144 unique amplicons. Downstream lab workflow suggestions (qPCR monitoring, SPRIselect cleanup) remain unchanged from earlier releases.
+The helper is preloaded with twelve i5 and twelve i7 indices, enabling up to 144 unique amplicons.
 
 #### Wet-lab workflow notes
 
 - Perform the initial amplification with an i5/i7 primer pair and monitor a small aliquot by qPCR. Cap thermocycling early so you only generate ~10% of the theoretical yield—this minimizes amplification bias.
 - Purify the product with SPRIselect beads at approximately a 0.65:1 bead:DNA volume ratio to remove residual primers and short fragments.
-- Confirm primer removal using electrophoresis (e.g., BioAnalyzer DNA chip) before moving to sequencing prep.
+- Confirm primer removal and quantify DNA using electrophoresis (e.g., BioAnalyzer DNA chip) before moving to the flow cell.
 
 ### SLIM primer design
 
@@ -134,7 +132,7 @@ Mutation nomenclature examples:
   ```
 - Outputs include primer sets and an assembly-plan CSV.
 
-If mutations fall within overlapping primer windows, design sequential reactions to avoid excessive primer reuse.
+If mutations fall within overlapping primer windows, design sequential reactions. 
 
 ### Mutation caller (no UMIs)
 
@@ -151,7 +149,7 @@ If mutations fall within overlapping primer windows, design sequential reactions
      --output-dir results/mutation_caller/ \
      --threshold 10
    ```
-3. Outputs: per-sample subdirectories with substitution summaries, co-occurrence matrices, and logs.
+3. Outputs: per-sample subdirectories with substitution summaries, co-occurrence matrices, and logs. Co-occurence matrices are experimental and are not yet to be relied on.
 
 ### UMI Hunter
 
@@ -165,6 +163,10 @@ If mutations fall within overlapping primer windows, design sequential reactions
     --output-dir results/umi_hunter/
   ```
 - Tunable parameters include `--umi-identity-threshold` and `--consensus-mutation-threshold`.
+- --umi-identity-threshold is a decimal between 0-1 and defines how similar two UMIs have to be to be considered grouped.
+- --consensus-mutation-threshold is the minimum group size to report a consensus sequence.
+
+Please be aware, this toolkit will not scale well beyond around 50k reads/sample. See UMIC-seq pipelines for efficient UMI-gene dictionary generation.
 
 ### Profile inserts
 
@@ -205,7 +207,7 @@ python -m uht_tooling.workflows.gui
 ```
 
 Key points:
-- The server binds to `http://127.0.0.1:7860` by default and falls back to an available port if 7860 is busy. Copy http://127.0.0.1:7860 into your browser.
+- The server binds to `http://127.0.0.1:7860` by default and falls back to an available port if 7860 is busy. Copy http://127.0.0.1:7860 into your browser to interface with the GUI.
 - Temporary working directories are created under the system temp folder and cleaned automatically.
 - Output archives (ZIP files) mirror the directory structure produced by the CLI.
 
