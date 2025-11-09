@@ -162,9 +162,10 @@ If mutations fall within overlapping primer windows, design sequential reactions
     --fastq data/umi_hunter/*.fastq.gz \
     --output-dir results/umi_hunter/
   ```
-- Tunable parameters include `--umi-identity-threshold` and `--consensus-mutation-threshold`.
-- --umi-identity-threshold is a decimal between 0-1 and defines how similar two UMIs have to be to be considered grouped.
-- --consensus-mutation-threshold is the minimum group size to report a consensus sequence.
+- Tunable parameters include `--umi-identity-threshold`, `--consensus-mutation-threshold`, and `--min-cluster-size`.
+- `--umi-identity-threshold` (0–1) controls how similar two UMIs must be to fall into the same cluster.
+- `--consensus-mutation-threshold` (0–1) is the fraction of reads within a cluster that must agree on a base before it is written into the consensus sequence.
+- `--min-cluster-size` sets the minimum number of reads required in a cluster before a consensus is generated (smaller clusters remain listed in the raw UMI CSV but no consensus FASTA is produced).
 
 Please be aware, this toolkit will not scale well beyond around 50k reads/sample. See UMIC-seq pipelines for efficient UMI-gene dictionary generation.
 
@@ -216,9 +217,9 @@ Key points:
 1. **Nextera XT** – forward/reverse primer inputs with CSV preview.
 2. **SLIM** – template/context FASTA text areas plus mutation list.
 3. **Gibson** – multi-mutation support using `+` syntax.
-4. **Mutation Caller** – upload FASTQ, template FASTA, and configuration CSV.
-5. **UMI Hunter** – long-read UMI clustering with configurable thresholds.
-6. **Profile Inserts** – probe CSV and multiple FASTQ uploads.
+4. **Mutation Caller** – upload FASTQ and template FASTA, then enter flanks and gene length bounds inline.
+5. **UMI Hunter** – long-read UMI clustering with flank entry, UMI length bounds, mutation threshold, and minimum cluster size.
+6. **Profile Inserts** – interactive probe table plus multiple FASTQ uploads with adjustable fuzzy-match ratio.
 7. **EP Library Profile** – FASTQ uploads plus plasmid and region FASTA inputs.
 
 ### Workflow tips

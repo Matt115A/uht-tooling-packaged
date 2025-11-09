@@ -233,6 +233,11 @@ def umi_hunter_command(
         max=1.0,
         help="Mutation threshold for consensus calling (default: 0.7).",
     ),
+    min_cluster_size: int = typer.Option(
+        1,
+        min=1,
+        help="Minimum number of reads required in a UMI cluster before a consensus is generated.",
+    ),
     log_path: Optional[Path] = typer.Option(
         None,
         dir_okay=False,
@@ -249,6 +254,7 @@ def umi_hunter_command(
         output_dir=output_dir,
         umi_identity_threshold=umi_identity_threshold,
         consensus_mutation_threshold=consensus_mutation_threshold,
+        min_cluster_size=min_cluster_size,
         log_path=log_path,
     )
     if not results:
@@ -256,7 +262,12 @@ def umi_hunter_command(
     else:
         typer.echo("UMI hunter outputs:")
         for entry in results:
-            typer.echo(f"  Sample {entry['sample']}: {entry['directory']}")
+            total_clusters = entry.get("clusters_total", entry.get("clusters", 0))
+            typer.echo(
+                f"  Sample {entry['sample']}: "
+                f"{entry.get('clusters', 0)} consensus clusters "
+                f"(from {total_clusters} total) → {entry['directory']}"
+            )
 
 
 @app.command("ep-library-profile", help="Profile mutation rates for ep-library sequencing data.")

@@ -264,6 +264,7 @@ def run_umi_hunter(
     output_dir: Path,
     umi_identity_threshold: float = 0.9,
     consensus_mutation_threshold: float = 0.7,
+    min_cluster_size: int = 1,
     log_path: Optional[Path] = None,
     logger: Optional[logging.Logger] = None,
 ) -> List[Dict[str, Path]]:
@@ -291,6 +292,9 @@ def run_umi_hunter(
         if not fastq_files:
             raise ValueError("No FASTQ files provided.")
 
+        if min_cluster_size < 1:
+            raise ValueError("Minimum cluster size must be at least 1.")
+
         cfg = load_flank_config(config_csv)
         pattern_umi, pattern_gene = build_patterns(cfg)
         reference_record = next(SeqIO.parse(str(template_fasta), "fasta"))
@@ -314,10 +318,20 @@ def run_umi_hunter(
             umi_csv = sample_dir / f"{sample_base}_UMI_clusters.csv"
             write_umi_csv(umi_csv, clusters)
 
+            significant_clusters = [
+                cluster for cluster in clusters if cluster["total_count"] >= min_cluster_size
+            ]
+            if not significant_clusters:
+                logger.info(
+                    "No clusters met the minimum size threshold (%s reads) for %s.",
+                    min_cluster_size,
+                    sample_base,
+                )
+
             gene_csv = sample_dir / f"{sample_base}_gene_consensus.csv"
             consensus_records = write_gene_csv(
                 gene_csv,
-                clusters,
+                significant_clusters,
                 reference_record,
                 consensus_mutation_threshold,
                 logger,
@@ -334,7 +348,8 @@ def run_umi_hunter(
                     "gene_csv": gene_csv,
                     "fasta": fasta_out,
                     "reads": read_count,
-                    "clusters": len(clusters),
+                    "clusters": len(significant_clusters),
+                    "clusters_total": len(clusters),
                 }
             )
 
