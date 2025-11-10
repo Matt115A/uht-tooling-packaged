@@ -8,15 +8,17 @@ Automation helpers for ultra-high-throughput molecular biology workflows. The pa
 
 ### Quick install (recommended, easiest file maintainance)
 ```bash
-pip install "uht-tooling[gui]==0.1.4"
+pip install "uht-tooling[gui]"
 
 ```
 
-This installs the core workflows plus the optional GUI dependencies (Gradio, pandas). Omit the `[gui]` extras if you only need the CLI:
+This installs the core workflows plus the optional GUI dependency (Gradio). Omit the `[gui]` extras if you only need the CLI:
 
 ```bash
 pip install uht-tooling
 ```
+
+You will need a functioning version of mafft - you should install this separately and it should be accessible from your environment.
 
 ### Development install
 ```bash
