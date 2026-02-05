@@ -566,10 +566,10 @@ def compute_consensus_aa_mutation(
 ) -> Tuple[Optional[dict], List[dict]]:
     """
     Derive a consensus amino-acid mutation estimate across Q-score thresholds.
-
+    
     Each threshold must meet a minimum coverage requirement. The consensus is a
     precision-weighted average (weights = 1 / std_aa_mutations).
-
+    
     Returns:
         consensus_info (dict or None)
             {
@@ -648,7 +648,7 @@ def compute_consensus_aa_mutation(
         consensus_std,
         thresholds,
     )
-
+    
     return consensus_info, valid_results
 
 def create_simple_qc_plots(quality_thresholds, qc_results, results_dir, consensus_info=None):
@@ -2170,12 +2170,12 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
             color="gray",
             transform=ax3.transAxes,
         )
-    
-    ax3.set_title("AA Mutation Distribution", fontsize=14, fontweight='bold')
-    ax3.set_xlabel("Number of AA Mutations", fontsize=12)
-    ax3.set_ylabel("Density", fontsize=12)
-    ax3.spines['top'].set_visible(False)
-    ax3.spines['right'].set_visible(False)
+        
+        ax3.set_title("AA Mutation Distribution", fontsize=14, fontweight='bold')
+        ax3.set_xlabel("Number of AA Mutations", fontsize=12)
+        ax3.set_ylabel("Density", fontsize=12)
+        ax3.spines['top'].set_visible(False)
+        ax3.spines['right'].set_visible(False)
 
     # Save the combined figure as both PNG and PDF
     panel_path_png = os.path.join(qscore_results_dir, "summary_panels.png")

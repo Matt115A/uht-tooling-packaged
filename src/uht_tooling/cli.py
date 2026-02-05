@@ -4,6 +4,7 @@ from typing import Optional
 import typer
 
 from uht_tooling.workflows.design_gibson import run_design_gibson
+from uht_tooling.workflows.design_kld import run_design_kld
 from uht_tooling.workflows.design_slim import run_design_slim
 from uht_tooling.workflows.mutation_caller import (
     expand_fastq_inputs as expand_fastq_inputs_mutation,
@@ -17,6 +18,10 @@ from uht_tooling.workflows.profile_inserts import (
 from uht_tooling.workflows.umi_hunter import (
     expand_fastq_inputs as expand_fastq_inputs_umi,
     run_umi_hunter,
+)
+from uht_tooling.workflows.mut_rate import (
+    expand_fastq_inputs as expand_fastq_inputs_ep,
+    run_ep_library_profile,
 )
 from uht_tooling.workflows.gui import launch_gui
 
@@ -60,6 +65,45 @@ def design_slim_command(
         log_path=log_path,
     )
     typer.echo(f"SLIM primers written to {output_dir / 'SLIM_primers.csv'}")
+
+
+@app.command("design-kld", help="Design KLD (inverse PCR) primers from user-specified FASTA/CSV inputs.")
+def design_kld_command(
+    gene_fasta: Path = typer.Option(..., exists=True, readable=True, help="Path to the gene FASTA file."),
+    context_fasta: Path = typer.Option(
+        ...,
+        exists=True,
+        readable=True,
+        help="Path to the context FASTA file containing the plasmid or genomic sequence.",
+    ),
+    mutations_csv: Path = typer.Option(
+        ...,
+        exists=True,
+        readable=True,
+        help="CSV file containing a 'mutations' column with the desired edits.",
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        dir_okay=True,
+        writable=True,
+        help="Directory where results will be written.",
+    ),
+    log_path: Optional[Path] = typer.Option(
+        None,
+        dir_okay=False,
+        writable=True,
+        help="Optional path to write a dedicated log file for this run.",
+    ),
+):
+    """Design KLD (inverse PCR) primers from user-provided inputs."""
+    result_path = run_design_kld(
+        gene_fasta=gene_fasta,
+        context_fasta=context_fasta,
+        mutations_csv=mutations_csv,
+        output_dir=output_dir,
+        log_path=log_path,
+    )
+    typer.echo(f"KLD primers written to {result_path}")
 
 
 @app.command("nextera-primers", help="Generate Nextera XT primers from binding region CSV input.")

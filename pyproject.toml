@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uht-tooling"
-version = "0.1.8"
+version = "0.1.9"
 description = "Tooling for ultra-high throughput screening workflows."
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Matt115A" }]
 dependencies = [
     "biopython==1.85",
