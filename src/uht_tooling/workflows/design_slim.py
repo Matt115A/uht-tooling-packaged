@@ -16,6 +16,41 @@ TARGET_TM = 60.0
 MAX_TM = 70.0
 UPSTREAM_15 = 12
 
+# IUPAC ambiguity codes mapping
+IUPAC_AMBIGUITY = {
+    'A': ['A'], 'C': ['C'], 'G': ['G'], 'T': ['T'],
+    'R': ['A', 'G'],      # puRine
+    'Y': ['C', 'T'],      # pYrimidine
+    'S': ['G', 'C'],      # Strong
+    'W': ['A', 'T'],      # Weak
+    'K': ['G', 'T'],      # Keto
+    'M': ['A', 'C'],      # aMino
+    'B': ['C', 'G', 'T'], # not A
+    'D': ['A', 'G', 'T'], # not C
+    'H': ['A', 'C', 'T'], # not G
+    'V': ['A', 'C', 'G'], # not T
+    'N': ['A', 'C', 'G', 'T'],
+}
+
+VALID_DEGENERATE_BASES = set(IUPAC_AMBIGUITY.keys())
+
+
+def is_valid_degenerate_codon(codon: str) -> bool:
+    """Check if a codon contains only valid IUPAC nucleotide codes."""
+    return len(codon) == 3 and all(b.upper() in VALID_DEGENERATE_BASES for b in codon)
+
+
+def contains_degenerate_bases(seq: str) -> bool:
+    """Return True if sequence contains non-standard (degenerate) bases."""
+    return any(b.upper() not in {'A', 'C', 'G', 'T'} for b in seq)
+
+
+def expand_degenerate_sequence(seq: str) -> list[str]:
+    """Expand a degenerate sequence to all possible standard sequences."""
+    from itertools import product
+    possibilities = [IUPAC_AMBIGUITY.get(b.upper(), [b]) for b in seq]
+    return [''.join(combo) for combo in product(*possibilities)]
+
 
 def codon_table():
     return {
@@ -103,7 +138,12 @@ def pick_mutant_codon(wt_codon, target_aa):
     return best_list[0][0]
 
 
-def calc_tm(seq):
+def calc_tm(seq: str) -> float:
+    """Calculate Tm, using average across expansions for degenerate sequences."""
+    if contains_degenerate_bases(seq):
+        expanded = expand_degenerate_sequence(seq)
+        tms = [mt.Tm_NN(s) for s in expanded]
+        return sum(tms) / len(tms)
     return mt.Tm_NN(seq)
 
 
@@ -266,6 +306,7 @@ def run_design_slim(
                     m_indel = re.match(r"^([A-Z])(\d+)InDel([A-Z])(\d+)([A-Z]+)$", m)
                     m_sub = re.match(r"^([A-Z])(\d+)([A-Z])$", m)
                     m_ins = re.match(r"^([A-Z])(\d+)([A-Z]{2,})$", m)
+                    m_lib = re.match(r"^([A-Z])(\d+):([A-Za-z]{3})$", m)
 
                     if m_del:
                         wt_aa, pos1 = m_del.group(1), int(m_del.group(2))
@@ -328,6 +369,39 @@ def run_design_slim(
                         if not new_seq:
                             logger.error("No minimal-change codon for %s->%s", wt_aa, mut_aa)
                             raise ValueError(f"No minimal-change codon for {wt_aa}->{mut_aa}")
+                    elif m_lib:
+                        wt_aa, pos_str, degenerate_codon = m_lib.groups()
+                        pos = int(pos_str)
+                        degenerate_codon = degenerate_codon.upper()
+
+                        # Validate the degenerate codon
+                        if not is_valid_degenerate_codon(degenerate_codon):
+                            raise ValueError(f"Invalid degenerate codon: {degenerate_codon}")
+
+                        region_start = gene_offset + (pos - 1) * 3
+                        old_len = 3
+
+                        # Validate WT amino acid (same as substitution validation)
+                        wt_codon = full_seq[region_start : region_start + 3]
+                        translated = translate_codon(wt_codon)
+                        if translated != wt_aa:
+                            logger.error(
+                                "Expected %s but found %s at codon %s for mutation %s",
+                                wt_aa, translated, wt_codon, mutation,
+                            )
+                            raise ValueError(
+                                f"For {mutation}: expected {wt_aa}, found {translated} at {wt_codon}"
+                            )
+
+                        new_seq = degenerate_codon
+
+                        # Log library coverage info
+                        expanded_codons = expand_degenerate_sequence(degenerate_codon)
+                        unique_aas = set(translate_codon(c) for c in expanded_codons if translate_codon(c) != '?')
+                        logger.info(
+                            "Library mutation %s: %d possible codons, %d amino acids",
+                            mutation, len(expanded_codons), len(unique_aas)
+                        )
                     else:
                         logger.error("Unknown mutation format: %s", mutation)
                         raise ValueError(f"Unknown mutation format: {mutation}")

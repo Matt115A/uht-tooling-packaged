@@ -112,6 +112,46 @@ Mutation nomenclature examples:
 - `T241Del` (deletion)
 - `T241TS` (insert Ser after Thr241)
 - `L46GP` (replace Leu46 with Gly-Pro)
+- `A123:NNK` (library mutation with degenerate codon)
+
+#### Library mutations with degenerate codons
+
+For saturation mutagenesis and library generation, SLIM supports degenerate (IUPAC ambiguity) codons using the format `<WT_AA><position>:<codon>`. The codon must be exactly 3 characters using valid IUPAC nucleotide codes:
+
+| Code | Bases | Mnemonic |
+|------|-------|----------|
+| A, C, G, T | Single base | Standard |
+| R | A, G | puRine |
+| Y | C, T | pYrimidine |
+| S | G, C | Strong |
+| W | A, T | Weak |
+| K | G, T | Keto |
+| M | A, C | aMino |
+| B | C, G, T | not A |
+| D | A, G, T | not C |
+| H | A, C, T | not G |
+| V | A, C, G | not T |
+| N | A, C, G, T | aNy |
+
+Common degenerate codon schemes for library construction:
+
+| Scheme | Codons | Amino acids | Stop codons | Notes |
+|--------|--------|-------------|-------------|-------|
+| NNK | 32 | 20 | 1 (TAG) | Reduced stop codon frequency |
+| NNS | 32 | 20 | 1 (TAG) | Equivalent to NNK |
+| NNN | 64 | 20 | 3 | All codons, higher stop frequency |
+| NDT | 12 | 12 | 0 | F, L, I, V, Y, H, N, D, C, R, S, G only |
+
+Example CSV with mixed mutation types:
+```csv
+mutations
+A123G
+T50:NNK
+S100:NNS
+T241Del
+```
+
+The workflow validates that the wild-type amino acid matches the template sequence and logs library coverage information (number of possible codons and amino acids) for each degenerate mutation. Primers are generated with the degenerate bases embedded; reverse primers contain the correct IUPAC reverse complements (e.g., K↔M, R↔Y, S↔S).
 
 #### Experimental blueprint
 
