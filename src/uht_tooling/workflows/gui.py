@@ -22,6 +22,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
     ) from exc
 
 from uht_tooling.workflows.design_gibson import run_design_gibson
+from uht_tooling.workflows.design_kld import run_design_kld
 from uht_tooling.workflows.design_slim import run_design_slim
 from uht_tooling.workflows.mut_rate import run_ep_library_profile
 from uht_tooling.workflows.mutation_caller import run_mutation_caller
@@ -181,6 +182,47 @@ def run_gui_design_slim(
         return summary, str(archive)
     except Exception as exc:  # pragma: no cover
         _LOGGER.exception("SLIM GUI failure")
+        return f"⚠️ Error: {exc}", None
+    finally:
+        _clean_temp_path(locals().get("work_dir", Path()))
+        _clean_temp_path(locals().get("output_dir", Path()))
+
+
+def run_gui_design_kld(
+    template_gene_content: str,
+    context_content: str,
+    mutations_text: str,
+) -> Tuple[str, Optional[str]]:
+    try:
+        gene_seq = _ensure_text(template_gene_content, "Template gene sequence")
+        context_seq = _ensure_text(context_content, "Context sequence")
+        mutation_lines = [line.strip() for line in mutations_text.splitlines() if line.strip()]
+        if not mutation_lines:
+            raise ValueError("Provide at least one mutation (e.g., A123G).")
+
+        work_dir = Path(tempfile.mkdtemp(prefix="uht_gui_kld_work_"))
+        output_dir = Path(tempfile.mkdtemp(prefix="uht_gui_kld_out_"))
+
+        gene_fasta = work_dir / "template_gene.fasta"
+        context_fasta = work_dir / "context.fasta"
+        mutations_csv = work_dir / "mutations.csv"
+
+        gene_fasta.write_text(f">template\n{gene_seq}\n")
+        context_fasta.write_text(f">context\n{context_seq}\n")
+        mutations_csv.write_text("mutations\n" + "\n".join(mutation_lines) + "\n")
+
+        result_csv = run_design_kld(
+            gene_fasta=gene_fasta,
+            context_fasta=context_fasta,
+            mutations_csv=mutations_csv,
+            output_dir=output_dir,
+        )
+
+        summary = _format_header("KLD Primer Design") + _preview_csv(result_csv)
+        archive = _zip_paths([output_dir], "kld")
+        return summary, str(archive)
+    except Exception as exc:  # pragma: no cover
+        _LOGGER.exception("KLD GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
         _clean_temp_path(locals().get("work_dir", Path()))
@@ -566,8 +608,8 @@ def create_gui() -> gr.Blocks:
         with gr.Tab("Nextera XT"):  # --- Nextera ---
             gr.Markdown(
                 textwrap.dedent(
-                    """
-                    ### Illumina-Compatible Primer Design
+                """
+                ### Illumina-Compatible Primer Design
                     Generates Nextera XT-ready primers from forward/reverse binding regions. The workflow preloads 12 i5 and 12 i7 indices (144 combinations) and mirrors the “One-PCR-to-flowcell” process described in the README.
 
                     **Inputs**
@@ -577,7 +619,7 @@ def create_gui() -> gr.Blocks:
                     **Outputs**
                     - CSV with i5/i7 indices, primer sequences, and ordering-ready metadata.
                     - Run log noting index selection and any validation warnings.
-                    """
+                """
                 )
             )
             forward = gr.Textbox(label="Forward primer (5'→3')")
@@ -599,24 +641,25 @@ def create_gui() -> gr.Blocks:
                         - Confirm primer depletion via electrophoresis (e.g., BioAnalyzer) before sequencing prep.
                         """
                     )
-                )
+            )
 
         with gr.Tab("SLIM"):
             gr.Markdown(
                 textwrap.dedent(
-                    """
-                    ### Sequence-Ligation Independent Mutagenesis
+                """
+                ### Sequence-Ligation Independent Mutagenesis
                     Designs paired short/long primers to introduce targeted mutations by SLIM cloning, matching the workflow outlined in the README.
 
                     **Inputs**
                     - Target gene coding sequence (FASTA content).
                     - Plasmid or genomic context containing the gene.
                     - Mutations (one per line, e.g. substitution `A123G`, deletion `T241Del`, insertion `T241TS`).
+                    - Library codons are supported via `AApos:COD` syntax (e.g. `R57:NNK`).
 
                     **Outputs**
                     - `SLIM_primers.csv` with primer sequences and annealing temperatures.
                     - Log file capturing primer QC and any design warnings.
-                    """
+                """
                 )
             )
             slim_gene = gr.Textbox(label="Gene sequence", lines=4)
@@ -640,13 +683,44 @@ def create_gui() -> gr.Blocks:
                         4. Transform directly into NEB 5-alpha or BL21 (DE3); the method scales to dozens of mutants simultaneously.
                         """
                     )
+            )
+
+        with gr.Tab("KLD"):
+            gr.Markdown(
+                textwrap.dedent(
+                """
+                ### KLD (Inverse PCR) Primer Design
+                    Designs inverse-PCR primers for KLD cloning. Forward primers carry the mutation at the 5' end, and reverse primers bind upstream to re-amplify the full plasmid.
+
+                    **Inputs**
+                    - Target gene coding sequence (FASTA content).
+                    - Plasmid or genomic context containing the gene.
+                    - Mutations (one per line, e.g. substitution `A123G`, deletion `T241Del`, insertion `T241TS`).
+                    - Library codons are supported via `AApos:COD` syntax (e.g. `R57:NNK`).
+
+                    **Outputs**
+                    - `KLD_primers.csv` with primer sequences and annealing temperatures.
+                    - Log file capturing primer QC and any design warnings.
+                """
                 )
+            )
+            kld_gene = gr.Textbox(label="Gene sequence", lines=4)
+            kld_context = gr.Textbox(label="Plasmid context", lines=4)
+            kld_mutations = gr.Textbox(label="Mutations (one per line)", lines=6)
+            kld_btn = gr.Button("Design KLD primers", variant="primary")
+            kld_summary = gr.Markdown(label="Summary")
+            kld_download = gr.File(label="Download primers", file_count="single")
+            kld_btn.click(
+                fn=run_gui_design_kld,
+                inputs=[kld_gene, kld_context, kld_mutations],
+                outputs=[kld_summary, kld_download],
+            )
 
         with gr.Tab("Gibson"):
             gr.Markdown(
                 textwrap.dedent(
-                    """
-                    ### Gibson Assembly Primer Design
+                """
+                ### Gibson Assembly Primer Design
                     Plans primer sets and assembly steps for Gibson mutagenesis, supporting multi-mutation constructs using the `+` syntax (e.g. `A123G+T150A`).
 
                     **Inputs**
@@ -658,7 +732,7 @@ def create_gui() -> gr.Blocks:
                     - Primer CSV with overlap sequences and melting temperatures.
                     - Assembly plan CSV detailing fragment combinations.
                     - Log summarising design decisions and any warnings about overlapping regions.
-                    """
+                """
                 )
             )
             gibson_gene = gr.Textbox(label="Gene sequence", lines=4)
@@ -681,13 +755,13 @@ def create_gui() -> gr.Blocks:
                         - When replacing entire codons (e.g. `L46GP`), ensure the plasmid context covers both flanks to maintain overlap.
                         """
                     )
-                )
+            )
 
         with gr.Tab("Mutation Caller"):
             gr.Markdown(
                 textwrap.dedent(
-                    """
-                    ### Long-read Mutation Analysis
+                """
+                ### Long-read Mutation Analysis
                     Extracts coding regions bounded by user-defined flanks, aligns them to the template, and reports amino-acid substitutions alongside co-occurrence summaries.
 
                     **Required inputs**
@@ -695,8 +769,8 @@ def create_gui() -> gr.Blocks:
                     - Template FASTA: coding sequence used as the reference for alignment.
                     - Flank sequences: short 8–12 bp motifs immediately upstream and downstream of the gene.
                     - Gene length bounds: acceptable size window (in nucleotides) for the extracted gene segment.
-                    """
-                )
+                """
+            )
             )
             with gr.Row():
                 mc_fastq = gr.File(
@@ -753,12 +827,12 @@ def create_gui() -> gr.Blocks:
                         - Outputs mirror the CLI version: per-sample directories with CSV summaries, JSON co-occurrence graphs, QC plots, and a detailed `run.log`.
                         """
                     )
-                )
+            )
 
         with gr.Tab("UMI Hunter"):
             gr.Markdown(
                 textwrap.dedent(
-                    """
+                """
                     ### UMI–Gene Pair Clustering
                     Detects UMI barcodes, extracts paired gene inserts, clusters reads by UMI identity, and emits consensus sequences with abundance tables.
 
@@ -768,8 +842,8 @@ def create_gui() -> gr.Blocks:
                     - UMI and gene flank sequences marking the barcode and insert boundaries.
                     - UMI length bounds plus clustering thresholds.
                     - Minimum reads per cluster to keep (clusters below the threshold are reported but no consensus is generated).
-                    """
-                )
+                """
+            )
             )
             with gr.Row():
                 umi_fastq = gr.File(
@@ -862,19 +936,19 @@ def create_gui() -> gr.Blocks:
                         - Outputs include per-sample summaries, consensus FASTA files, cluster membership tables, QC plots, and logs mirroring the CLI workflow.
                         """
                     )
-                )
+            )
 
         with gr.Tab("Profile Inserts"):
             gr.Markdown(
                 textwrap.dedent(
-                    """
+                """
                     ### Probe-Guided Insert Profiling
                     Characterises inserts demarcated by user-supplied upstream/downstream probes, extracts sequences, and produces QC plots plus summary tables.
 
                     **Required inputs**
                     - FASTQ reads containing the inserts of interest.
                     - One or more probe pairs: 5'→3' sequences for the upstream and downstream anchors (reverse complements are matched automatically).
-                    """
+                """
                 )
             )
             probes_table = gr.Dataframe(
@@ -916,13 +990,13 @@ def create_gui() -> gr.Blocks:
                         - Logs are stored alongside the results so runs remain fully reproducible.
                         """
                     )
-                )
+            )
 
         with gr.Tab("EP Library Profile"):
             gr.Markdown(
                 textwrap.dedent(
-                    """
-                    ### Library Profiling Without UMIs
+                """
+                ### Library Profiling Without UMIs
                     Estimates background and target mutation rates for enzyme evolution libraries without UMI barcodes.
 
                     **Inputs**
@@ -934,7 +1008,7 @@ def create_gui() -> gr.Blocks:
                     - Per-sample directories with coverage tables, mutation rate statistics, and QC plots.
                     - `master_summary.txt` aggregating condition-level metrics.
                     - Verbose logs recording alignment commands and rate calculations.
-                    """
+                """
                 )
             )
             ep_fastq = gr.File(
@@ -963,7 +1037,7 @@ def create_gui() -> gr.Blocks:
                         - Download the archive to inspect per-sample plots, TSV summaries, the consensus summary, and logs for troubleshooting.
                         """
                     )
-                )
+            )
 
         gr.Markdown(
             textwrap.dedent(

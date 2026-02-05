@@ -53,6 +53,7 @@ Each command mirrors a workflow module. Common entry points:
 | --- | --- |
 | `uht-tooling nextera-primers` | Generate Nextera XT primer pairs from a binding-region CSV. |
 | `uht-tooling design-slim` | Design SLIM mutagenesis primers from FASTA/CSV inputs. |
+| `uht-tooling design-kld` | Design KLD (inverse PCR) mutagenesis primers. |
 | `uht-tooling design-gibson` | Produce Gibson mutagenesis primers and assembly plans. |
 | `uht-tooling mutation-caller` | Summarise amino-acid substitutions from long-read FASTQ files. |
 | `uht-tooling umi-hunter` | Cluster UMIs and call consensus genes. |
@@ -160,6 +161,52 @@ The workflow validates that the wild-type amino acid matches the template sequen
 - Combine 10 µL from each PCR with 10 µL H-buffer (150 mM Tris pH 8, 400 mM NaCl, 60 mM EDTA) for a 30 µL annealing reaction: 99 °C for 3 min, then two cycles of 65 °C for 5 min followed by 30 °C for 15 min, hold at 4 °C.
 - Transform directly into NEB 5-alpha or BL21 (DE3) cells without additional cleanup. The protocol has been validated for simultaneous introduction of dozens of mutations.
 
+### KLD primer design
+
+KLD (Kinase-Ligation-DpnI) is an alternative mutagenesis method using inverse PCR to amplify the entire plasmid with mutations incorporated at the primer junction.
+
+- Inputs: Same as SLIM design
+  - `data/design_kld/kld_template_gene.fasta`
+  - `data/design_kld/kld_context.fasta`
+  - `data/design_kld/kld_target_mutations.csv` (single `mutations` column)
+- Run:
+  ```bash
+  uht-tooling design-kld \
+    --gene-fasta data/design_kld/kld_template_gene.fasta \
+    --context-fasta data/design_kld/kld_context.fasta \
+    --mutations-csv data/design_kld/kld_target_mutations.csv \
+    --output-dir results/design_kld/
+  ```
+- Output: `results/design_kld/KLD_primers.csv` plus logs.
+
+Mutation nomenclature: Same as SLIM (substitution, deletion, insertion, indel, library).
+
+#### KLD vs SLIM
+
+| Method | Primers | Mechanism | Best for |
+|--------|---------|-----------|----------|
+| SLIM | 4 per mutation | Overlap assembly | Multiple simultaneous mutations |
+| KLD | 2 per mutation | Inverse PCR + ligation | Single mutations, simpler workflow |
+
+#### KLD primer design rules
+
+- Forward primer: Mutation codon at 5' end + downstream template-binding region
+- Reverse primer: Reverse complement of upstream region, 5' end adjacent to forward
+- Tm calculated on template-binding regions only (50-65°C target)
+- Tm difference between primers kept within 5°C
+- GC content 40-60%
+- Binding region 18-24 bp
+
+#### Experimental workflow
+
+1. PCR amplify entire plasmid with KLD primer pair
+2. DpnI digest to remove methylated template
+3. T4 PNK phosphorylation of 5' ends
+4. T4 DNA ligase to circularize
+5. Transform into competent cells
+
+NEB sells a KLD Enzyme Mix (M0554) that combines these steps.
+
 ### Gibson assembly primers
 
 - Inputs mirror the SLIM workflow but use `data/design_gibson/`.
@@ -264,12 +311,13 @@ Key points:
 ### Tabs and capabilities
 
 1. **Nextera XT** – forward/reverse primer inputs with CSV preview.
-2. **SLIM** – template/context FASTA text areas plus mutation list.
-3. **Gibson** – multi-mutation support using `+` syntax.
-4. **Mutation Caller** – upload FASTQ and template FASTA, then enter flanks and gene length bounds inline.
-5. **UMI Hunter** – long-read UMI clustering with flank entry, UMI length bounds, mutation threshold, and minimum cluster size.
-6. **Profile Inserts** – interactive probe table plus multiple FASTQ uploads with adjustable fuzzy-match ratio.
-7. **EP Library Profile** – FASTQ uploads plus plasmid and region FASTA inputs.
+2. **SLIM** – template/context FASTA text areas plus mutation list (supports library codons like `R57:NNK`).
+3. **KLD** – inverse-PCR primer design using the same mutation list format (including library codons like `R57:NNK`).
+4. **Gibson** – multi-mutation support using `+` syntax.
+5. **Mutation Caller** – upload FASTQ and template FASTA, then enter flanks and gene length bounds inline.
+6. **UMI Hunter** – long-read UMI clustering with flank entry, UMI length bounds, mutation threshold, and minimum cluster size.
+7. **Profile Inserts** – interactive probe table plus multiple FASTQ uploads with adjustable fuzzy-match ratio.
+8. **EP Library Profile** – FASTQ uploads plus plasmid and region FASTA inputs.
 
 ### Workflow tips
 
