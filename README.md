@@ -18,7 +18,22 @@ This installs the core workflows plus the optional GUI dependency (Gradio). Omit
 pip install uht-tooling
 ```
 
-You will need a functioning version of mafft - you should install this separately and it should be accessible from your environment.
+### External Tools
+
+Some workflows require external bioinformatics tools:
+
+| Workflow | Required Tools |
+|----------|---------------|
+| mutation-caller | mafft |
+| umi-hunter | mafft |
+| ep-library-profile | minimap2, NanoFilt |
+
+Install via conda:
+```bash
+conda install -c bioconda mafft minimap2 nanofilt
+```
+
+The CLI and GUI will validate tool availability before running and provide clear error messages if tools are missing.
 
 ### Development install
 ```bash
@@ -66,7 +81,66 @@ Each command provides detailed help, including option descriptions and expected 
 uht-tooling mutation-caller --help
 ```
 
+### Short Flags
+
+All commands support short flags for common options:
+
+```bash
+# Long form
+uht-tooling design-slim --gene-fasta gene.fa --context-fasta ctx.fa --mutations-csv mut.csv --output-dir out/
+
+# Short form
+uht-tooling design-slim -g gene.fa -c ctx.fa -m mut.csv -o out/
+```
+
+| Long Flag | Short | Commands |
+|-----------|-------|----------|
+| `--gene-fasta` | `-g` | design-slim, design-kld, design-gibson |
+| `--context-fasta` | `-c` | design-slim, design-kld, design-gibson |
+| `--mutations-csv` | `-m` | design-slim, design-kld, design-gibson |
+| `--output-dir` | `-o` | 7 commands |
+| `--log-path` | `-l` | 7 commands |
+| `--template-fasta` | `-t` | mutation-caller, umi-hunter |
+| `--fastq` | `-q` | 4 commands |
+| `--threshold` | `-T` | mutation-caller |
+| `--config-csv` | `-C` | umi-hunter |
+| `--binding-csv` | `-b` | nextera-primers |
+| `--probes-csv` | `-P` | profile-inserts |
+| `--region-fasta` | `-R` | ep-library-profile |
+| `--plasmid-fasta` | `-p` | ep-library-profile |
+| `--work-dir` | `-w` | ep-library-profile |
+| `--config` | `-K` | global (all commands) |
+
 You can pass multiple FASTQ paths using repeated `--fastq` options or glob patterns. Optional `--log-path` flags redirect logs if you prefer a location outside the default results directory.
+
+---
+
+## Configuration File
+
+uht-tooling supports a YAML configuration file for default options.
+
+**Auto-discovery locations** (in order):
+1. `$UHT_TOOLING_CONFIG` environment variable
+2. `~/.uht-tooling.yaml`
+3. `~/.config/uht-tooling/config.yaml`
+4. `.uht-tooling.yaml` (current directory)
+
+Or specify explicitly: `uht-tooling --config my-config.yaml ...`
+
+**Example ~/.uht-tooling.yaml:**
+```yaml
+paths:
+  output_dir: ~/results/uht-tooling
+
+defaults:
+  mutation_caller:
+    threshold: 15
+  umi_hunter:
+    umi_identity_threshold: 0.85
+    min_cluster_size: 5
+```
+
+CLI options always take precedence over config values.
 
 ---
 

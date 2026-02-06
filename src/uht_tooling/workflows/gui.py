@@ -21,6 +21,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
         f"{exc}. Install optional GUI extras via 'pip install gradio pandas'."
     ) from exc
 
+from uht_tooling.tools import ToolNotFoundError, validate_workflow_tools
 from uht_tooling.workflows.design_gibson import run_design_gibson
 from uht_tooling.workflows.design_kld import run_design_kld
 from uht_tooling.workflows.design_slim import run_design_slim
@@ -291,6 +292,12 @@ def run_gui_mutation_caller(
     config_dir: Optional[Path] = None
     output_dir: Optional[Path] = None
     try:
+        # Validate required external tools
+        try:
+            validate_workflow_tools("mutation_caller")
+        except ToolNotFoundError as e:
+            return f"Missing required tools: {e}", None
+
         if not fastq_file or not template_file:
             raise ValueError("Upload a FASTQ(.gz) read file and the reference template FASTA.")
 
@@ -367,6 +374,12 @@ def run_gui_umi_hunter(
     config_dir: Optional[Path] = None
     output_dir: Optional[Path] = None
     try:
+        # Validate required external tools
+        try:
+            validate_workflow_tools("umi_hunter")
+        except ToolNotFoundError as e:
+            return f"Missing required tools: {e}", None
+
         if not fastq_file or not template_file:
             raise ValueError("Upload a FASTQ(.gz) read file and the template FASTA.")
 
@@ -536,6 +549,12 @@ def run_gui_ep_library_profile(
     plasmid_fasta: Optional[str],
 ) -> Tuple[str, Optional[str]]:
     try:
+        # Validate required external tools
+        try:
+            validate_workflow_tools("ep_library_profile")
+        except ToolNotFoundError as e:
+            return f"Missing required tools: {e}", None
+
         if not fastq_files or not region_fasta or not plasmid_fasta:
             raise ValueError("Upload FASTQ(.gz) files plus region-of-interest and plasmid FASTA files.")
 

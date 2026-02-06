@@ -3,6 +3,8 @@ from typing import Optional
 
 import typer
 
+from uht_tooling.config import get_option, load_config
+from uht_tooling.tools import ToolNotFoundError, validate_workflow_tools
 from uht_tooling.workflows.design_gibson import run_design_gibson
 from uht_tooling.workflows.design_kld import run_design_kld
 from uht_tooling.workflows.design_slim import run_design_slim
@@ -28,29 +30,57 @@ from uht_tooling.workflows.gui import launch_gui
 app = typer.Typer(help="Command-line interface for the uht-tooling package.")
 
 
+@app.callback()
+def main_callback(
+    ctx: typer.Context,
+    config: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-K",
+        exists=True,
+        readable=True,
+        help="Path to YAML configuration file for default options.",
+    ),
+):
+    """Global callback to load configuration file."""
+    ctx.ensure_object(dict)
+    ctx.obj["config"] = load_config(config)
+
+
 @app.command("design-slim", help="Design SLIM primers from user-specified FASTA/CSV inputs.")
 def design_slim_command(
-    gene_fasta: Path = typer.Option(..., exists=True, readable=True, help="Path to the gene FASTA file."),
+    ctx: typer.Context,
+    gene_fasta: Path = typer.Option(
+        ..., "--gene-fasta", "-g", exists=True, readable=True, help="Path to the gene FASTA file."
+    ),
     context_fasta: Path = typer.Option(
         ...,
+        "--context-fasta",
+        "-c",
         exists=True,
         readable=True,
         help="Path to the context FASTA file containing the plasmid or genomic sequence.",
     ),
     mutations_csv: Path = typer.Option(
         ...,
+        "--mutations-csv",
+        "-m",
         exists=True,
         readable=True,
         help="CSV file containing a 'mutations' column with the desired edits.",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory where results will be written.",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path to write a dedicated log file for this run.",
@@ -69,27 +99,38 @@ def design_slim_command(
 
 @app.command("design-kld", help="Design KLD (inverse PCR) primers from user-specified FASTA/CSV inputs.")
 def design_kld_command(
-    gene_fasta: Path = typer.Option(..., exists=True, readable=True, help="Path to the gene FASTA file."),
+    ctx: typer.Context,
+    gene_fasta: Path = typer.Option(
+        ..., "--gene-fasta", "-g", exists=True, readable=True, help="Path to the gene FASTA file."
+    ),
     context_fasta: Path = typer.Option(
         ...,
+        "--context-fasta",
+        "-c",
         exists=True,
         readable=True,
         help="Path to the context FASTA file containing the plasmid or genomic sequence.",
     ),
     mutations_csv: Path = typer.Option(
         ...,
+        "--mutations-csv",
+        "-m",
         exists=True,
         readable=True,
         help="CSV file containing a 'mutations' column with the desired edits.",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory where results will be written.",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path to write a dedicated log file for this run.",
@@ -108,26 +149,34 @@ def design_kld_command(
 
 @app.command("nextera-primers", help="Generate Nextera XT primers from binding region CSV input.")
 def nextera_primers_command(
+    ctx: typer.Context,
     binding_csv: Path = typer.Option(
         ...,
+        "--binding-csv",
+        "-b",
         exists=True,
         readable=True,
         help="CSV file with a 'binding_region' column; first row is i7, second row is i5.",
     ),
     output_csv: Path = typer.Option(
         ...,
+        "--output-csv",
+        "-o",
         dir_okay=False,
         writable=True,
         help="Path to write the generated primer CSV.",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path to write a dedicated log file.",
     ),
     config: Optional[Path] = typer.Option(
         None,
+        "--nextera-config",
         exists=True,
         readable=True,
         help="Optional YAML file providing overrides for indexes/prefixes/suffixes.",
@@ -145,27 +194,38 @@ def nextera_primers_command(
 
 @app.command("design-gibson", help="Design Gibson assembly primers and assembly plans.")
 def design_gibson_command(
-    gene_fasta: Path = typer.Option(..., exists=True, readable=True, help="Path to the gene FASTA file."),
+    ctx: typer.Context,
+    gene_fasta: Path = typer.Option(
+        ..., "--gene-fasta", "-g", exists=True, readable=True, help="Path to the gene FASTA file."
+    ),
     context_fasta: Path = typer.Option(
         ...,
+        "--context-fasta",
+        "-c",
         exists=True,
         readable=True,
         help="Path to the circular context FASTA file.",
     ),
     mutations_csv: Path = typer.Option(
         ...,
+        "--mutations-csv",
+        "-m",
         exists=True,
         readable=True,
         help="CSV file with a 'mutations' column (use '+' to link sub-mutations).",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory where primer and assembly plan CSVs will be written.",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path for a dedicated log file.",
@@ -189,41 +249,65 @@ def design_gibson_command(
     help="Identify amino-acid substitutions from long-read data without UMIs.",
 )
 def mutation_caller_command(
+    ctx: typer.Context,
     template_fasta: Path = typer.Option(
         ...,
+        "--template-fasta",
+        "-t",
         exists=True,
         readable=True,
         help="FASTA file containing the mutation caller template sequence.",
     ),
     flanks_csv: Path = typer.Option(
         ...,
+        "--flanks-csv",
+        "-f",
         exists=True,
         readable=True,
         help="CSV file describing gene flanks and min/max lengths.",
     ),
     fastq: list[str] = typer.Option(
         ...,
+        "--fastq",
+        "-q",
         help="One or more FASTQ(.gz) paths or glob patterns (provide multiple --fastq options as needed).",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory where per-sample outputs will be written.",
     ),
     threshold: int = typer.Option(
         10,
+        "--threshold",
+        "-T",
         min=1,
         help="Minimum AA substitution count to include in the frequent-substitution report.",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path to write a dedicated log file.",
     ),
 ):
     """Identify and summarise amino-acid substitutions."""
+    # Validate required external tools
+    try:
+        validate_workflow_tools("mutation_caller")
+    except ToolNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Apply config defaults
+    config = ctx.obj.get("config", {}) if ctx.obj else {}
+    threshold = get_option(config, "threshold", threshold, default=10, workflow="mutation_caller")
+
     fastq_files = expand_fastq_inputs_mutation(fastq)
     results = run_mutation_caller(
         template_fasta=template_fasta,
@@ -243,53 +327,89 @@ def mutation_caller_command(
 
 @app.command("umi-hunter", help="Cluster UMIs and produce consensus genes from long-read data.")
 def umi_hunter_command(
+    ctx: typer.Context,
     template_fasta: Path = typer.Option(
         ...,
+        "--template-fasta",
+        "-t",
         exists=True,
         readable=True,
         help="Template FASTA file for consensus generation.",
     ),
     config_csv: Path = typer.Option(
         ...,
+        "--config-csv",
+        "-C",
         exists=True,
         readable=True,
         help="CSV describing UMI/gene flanks and length bounds.",
     ),
     fastq: list[str] = typer.Option(
         ...,
+        "--fastq",
+        "-q",
         help="One or more FASTQ(.gz) paths or glob patterns (multiple --fastq options allowed).",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory where UMI hunter outputs will be stored.",
     ),
     umi_identity_threshold: float = typer.Option(
         0.9,
+        "--umi-identity-threshold",
+        "-u",
         min=0.0,
         max=1.0,
         help="UMI clustering identity threshold (default: 0.9).",
     ),
     consensus_mutation_threshold: float = typer.Option(
         0.7,
+        "--consensus-mutation-threshold",
+        "-M",
         min=0.0,
         max=1.0,
         help="Mutation threshold for consensus calling (default: 0.7).",
     ),
     min_cluster_size: int = typer.Option(
         1,
+        "--min-cluster-size",
+        "-s",
         min=1,
         help="Minimum number of reads required in a UMI cluster before a consensus is generated.",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path to write a dedicated log file.",
     ),
 ):
     """Cluster UMIs and generate consensus sequences from long-read FASTQ data."""
+    # Validate required external tools
+    try:
+        validate_workflow_tools("umi_hunter")
+    except ToolNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Apply config defaults
+    config = ctx.obj.get("config", {}) if ctx.obj else {}
+    umi_identity_threshold = get_option(
+        config, "umi_identity_threshold", umi_identity_threshold, default=0.9, workflow="umi_hunter"
+    )
+    consensus_mutation_threshold = get_option(
+        config, "consensus_mutation_threshold", consensus_mutation_threshold, default=0.7, workflow="umi_hunter"
+    )
+    min_cluster_size = get_option(
+        config, "min_cluster_size", min_cluster_size, default=1, workflow="umi_hunter"
+    )
+
     fastq_files = expand_fastq_inputs_umi(fastq)
     results = run_umi_hunter(
         template_fasta=template_fasta,
@@ -310,42 +430,60 @@ def umi_hunter_command(
             typer.echo(
                 f"  Sample {entry['sample']}: "
                 f"{entry.get('clusters', 0)} consensus clusters "
-                f"(from {total_clusters} total) → {entry['directory']}"
+                f"(from {total_clusters} total) -> {entry['directory']}"
             )
 
 
 @app.command("ep-library-profile", help="Profile mutation rates for ep-library sequencing data.")
 def ep_library_profile_command(
+    ctx: typer.Context,
     region_fasta: Path = typer.Option(
         ...,
+        "--region-fasta",
+        "-R",
         exists=True,
         readable=True,
         help="FASTA file describing the region of interest.",
     ),
     plasmid_fasta: Path = typer.Option(
         ...,
+        "--plasmid-fasta",
+        "-p",
         exists=True,
         readable=True,
         help="FASTA file with the full plasmid sequence.",
     ),
     fastq: list[str] = typer.Option(
         ...,
+        "--fastq",
+        "-q",
         help="One or more FASTQ(.gz) paths or glob patterns (multiple --fastq options allowed).",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory for per-sample outputs.",
     ),
     work_dir: Optional[Path] = typer.Option(
         None,
+        "--work-dir",
+        "-w",
         dir_okay=True,
         writable=True,
         help="Optional scratch directory for intermediate files (defaults to output/tmp).",
     ),
 ):
     """Quantify mutation rates for ep-library sequencing experiments."""
+    # Validate required external tools
+    try:
+        validate_workflow_tools("ep_library_profile")
+    except ToolNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
     fastq_files = expand_fastq_inputs_ep(fastq)
     results = run_ep_library_profile(
         fastq_paths=fastq_files,
@@ -365,30 +503,41 @@ def ep_library_profile_command(
 
 @app.command("profile-inserts", help="Extract and profile inserts using probe pairs.")
 def profile_inserts_command(
+    ctx: typer.Context,
     probes_csv: Path = typer.Option(
         ...,
+        "--probes-csv",
+        "-P",
         exists=True,
         readable=True,
         help="CSV file containing upstream/downstream probes.",
     ),
     fastq: list[str] = typer.Option(
         ...,
+        "--fastq",
+        "-q",
         help="One or more FASTQ(.gz) paths or glob patterns (multiple --fastq options allowed).",
     ),
     output_dir: Path = typer.Option(
         ...,
+        "--output-dir",
+        "-o",
         dir_okay=True,
         writable=True,
         help="Directory for per-sample outputs.",
     ),
     min_ratio: int = typer.Option(
         80,
+        "--min-ratio",
+        "-r",
         min=0,
         max=100,
         help="Minimum fuzzy match ratio for probe detection (default: 80).",
     ),
     log_path: Optional[Path] = typer.Option(
         None,
+        "--log-path",
+        "-l",
         dir_okay=False,
         writable=True,
         help="Optional path to write a dedicated log file.",

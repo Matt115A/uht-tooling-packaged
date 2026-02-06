@@ -17,6 +17,7 @@ from Bio.Align.Applications import MafftCommandline
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from scipy.stats import fisher_exact, gaussian_kde
+from tqdm import tqdm
 
 
 def reverse_complement(seq: str) -> str:
@@ -52,8 +53,16 @@ def extract_gene(seq: str, pattern: re.Pattern, gene_min: int, gene_max: int) ->
 
 def process_fastq(file_path: Path, pattern: re.Pattern, gene_min: int, gene_max: int) -> Dict[str, str]:
     gene_reads: Dict[str, str] = {}
+
+    # Count total reads for progress bar
+    total_reads = 0
     with gzip.open(file_path, "rt") as handle:
-        while True:
+        for _ in handle:
+            total_reads += 1
+    total_reads = total_reads // 4
+
+    with gzip.open(file_path, "rt") as handle:
+        for _ in tqdm(range(total_reads), desc=f"Processing {file_path.name}", unit="read"):
             header = handle.readline()
             if not header:
                 break
@@ -274,7 +283,7 @@ def run_mutation_caller(
 
         results: List[Dict[str, Path]] = []
 
-        for fastq in fastq_files:
+        for fastq in tqdm(fastq_files, desc="Processing samples", unit="sample"):
             if not fastq.exists():
                 logger.warning("FASTQ file %s not found; skipping.", fastq)
                 continue

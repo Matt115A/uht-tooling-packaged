@@ -16,6 +16,7 @@ import math
 import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from tqdm import tqdm
 
 # Use a built-in Matplotlib style ("ggplot") for consistency
 plt.style.use("ggplot")
@@ -219,7 +220,12 @@ def compute_mismatch_stats_sam(sam_file, refs_dict):
 
     logging.info(f"Computing mismatch stats for {sam_file}")
     samfile = pysam.AlignmentFile(sam_file, "r")
-    for read in samfile.fetch():
+    # Count total aligned reads for progress bar
+    total_reads = sum(1 for _ in samfile.fetch())
+    samfile.close()
+
+    samfile = pysam.AlignmentFile(sam_file, "r")
+    for read in tqdm(samfile.fetch(), desc="Computing mismatch stats", total=total_reads, unit="read"):
         if read.is_unmapped or read.query_sequence is None:
             continue
         ref_name = samfile.get_reference_name(read.reference_id)
@@ -2709,7 +2715,7 @@ def run_ep_library_profile(
     master_summary_path.write_text(header + "\n", encoding="utf-8")
 
     sample_results: List[Dict[str, object]] = []
-    for fastq in fastq_paths:
+    for fastq in tqdm(fastq_paths, desc="Processing FASTQ files", unit="file"):
         result = process_single_fastq(
             fastq,
             region_fasta,

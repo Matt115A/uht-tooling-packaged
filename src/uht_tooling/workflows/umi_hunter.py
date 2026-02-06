@@ -68,11 +68,18 @@ def process_fastq(
     pattern_gene: re.Pattern,
     logger: logging.Logger,
 ) -> tuple[int, Dict[str, List[str]]]:
+    # Count total reads for progress bar
+    total_reads = 0
+    with gzip.open(file_path, "rt") as handle:
+        for _ in handle:
+            total_reads += 1
+    total_reads = total_reads // 4
+
     read_count = 0
     umi_info: Dict[str, List[str]] = {}
     extracted = 0
     with gzip.open(file_path, "rt") as handle:
-        while True:
+        for _ in tqdm(range(total_reads), desc=f"Processing {file_path.name}", unit="read"):
             header = handle.readline()
             if not header:
                 break
@@ -85,8 +92,6 @@ def process_fastq(
             if umi and gene:
                 umi_info.setdefault(umi, []).append(gene)
                 extracted += 1
-            if read_count % 100000 == 0:
-                logger.info("Processed %s reads so far in %s", read_count, file_path.name)
     logger.info(
         "Finished reading %s: total reads=%s, extracted pairs=%s",
         file_path,
@@ -129,7 +134,7 @@ def cluster_umis(
     logger.info("Clustering %s unique UMIs with threshold %.2f", len(umi_info), threshold)
     sorted_umis = sorted(umi_info.items(), key=lambda item: len(item[1]), reverse=True)
     clusters: List[dict] = []
-    for umi, gene_list in sorted_umis:
+    for umi, gene_list in tqdm(sorted_umis, desc="Clustering UMIs", unit="UMI"):
         count = len(gene_list)
         for cluster in clusters:
             if percent_identity(umi, cluster["rep"]) >= threshold:
