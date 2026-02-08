@@ -62,6 +62,8 @@ def _ensure_workspace(path: Path, purpose: str) -> Path:
     root = _workspace_root(path)
     if root is None:
         root = _maybe_init_temp_workspace(path)
+    if root is None and _is_temp_path(path):
+        return Path(path).resolve()
     if root is None:
         raise ValueError(_workspace_error(path, purpose))
     return root
@@ -82,6 +84,15 @@ def _maybe_init_temp_workspace(path: Path) -> Optional[Path]:
                 return None
         return resolved
     return None
+
+
+def _is_temp_path(path: Path) -> bool:
+    try:
+        resolved = Path(path).resolve()
+    except FileNotFoundError:
+        return False
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    return resolved == tmp_root or tmp_root in resolved.parents
 
 
 def _safe_rmtree(path: Optional[Path], *, allowed_base: Optional[Path] = None, label: str = "") -> bool:
