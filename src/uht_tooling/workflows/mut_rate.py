@@ -648,48 +648,7 @@ def run_qc_analysis(fastq_path, results_dir, ref_hit_fasta, plasmid_fasta):
         # Derive consensus AA mutation estimates across valid Q-score thresholds
         consensus_info, _ = compute_consensus_aa_mutation(qc_results)
         
-        # Create QC plots
-        if len(qc_results) >= 2:
-            create_simple_qc_plots(
-                successful_thresholds,
-                qc_results,
-                results_dir,
-                consensus_info=consensus_info,
-            )
-        else:
-            logging.warning("Insufficient data points for QC plots (need at least 2)")
-        
-        # Save consensus summary
-        consensus_summary_path = os.path.join(results_dir, "aa_mutation_consensus.txt")
-        with open(consensus_summary_path, "w") as f:
-            f.write("=== CONSENSUS AMINO-ACID MUTATION ESTIMATE ===\n")
-            if consensus_info:
-                f.write(f"Minimum mappable bases required: {consensus_info['min_mappable_bases']}\n")
-                f.write(
-                    f"Consensus AA mutations per gene: {consensus_info['consensus_mean']:.4f} ± "
-                    f"{consensus_info['consensus_std']:.4f}\n"
-                )
-                f.write(f"Thresholds contributing: {consensus_info['thresholds_used']}\n")
-                f.write(f"Normalized weights: {consensus_info['weights']}\n")
-                if consensus_info.get("note"):
-                    f.write(f"Note: {consensus_info['note']}\n")
-            else:
-                f.write("Consensus AA mutation rate could not be computed; see QC logs for details.\n")
-            f.write("\n=== ALL Q-SCORE RESULTS ===\n")
-            f.write(
-                "Q-score\tMean_AA\tStd_AA\tCI_Lower\tCI_Upper\tMappable_Bases\tSegments\n"
-            )
-            for result in qc_results:
-                f.write(
-                    f"{result['quality_threshold']}\t"
-                    f"{result['mean_aa_mutations']:.6f}\t"
-                    f"{result['std_aa_mutations']:.6f}\t"
-                    f"{result['ci_lower']:.6f}\t"
-                    f"{result['ci_upper']:.6f}\t"
-                    f"{result['total_mappable_bases']}\t"
-                    f"{result['n_segments']}\n"
-                )
-        logging.info("Consensus AA mutation summary saved to: %s", consensus_summary_path)
+        logging.info("QC computation complete (consensus info will feed KEY_FINDINGS.txt)")
         
         # Clean up segment files
         segment_dir = os.path.dirname(segment_files[0])
@@ -799,412 +758,6 @@ def compute_consensus_aa_mutation(
     )
     
     return consensus_info, valid_results
-
-def create_simple_qc_plots(quality_thresholds, qc_results, results_dir, consensus_info=None):
-    """
-    Create simple QC plots with empirical error bars.
-    
-    Args:
-        quality_thresholds: List of quality score thresholds
-        qc_results: List of segmentation analysis results
-        results_dir: Directory to save the plots
-        consensus_info: Optional dict describing the consensus AA mutation estimate.
-    """
-    try:
-        # Extract data for plotting
-        aa_mutations = [r['mean_aa_mutations'] for r in qc_results]
-        aa_errors = [r['std_aa_mutations'] for r in qc_results]
-        aa_ci_lower = [r['ci_lower'] for r in qc_results]
-        aa_ci_upper = [r['ci_upper'] for r in qc_results]
-        mappable_bases = [r['total_mappable_bases'] for r in qc_results]
-        
-        # Create main QC plot
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-        
-        # Top plot: AA mutations per gene with empirical error bars
-        color1 = '#2E8B57'
-        ax1.errorbar(quality_thresholds, aa_mutations, yerr=aa_errors, 
-                    fmt='o', capsize=5, capthick=2, markersize=8, 
-                    color=color1, ecolor=color1, alpha=0.8, label='Mean ± Empirical Std')
-        
-        # Add confidence intervals as shaded area
-        ax1.fill_between(quality_thresholds, aa_ci_lower, aa_ci_upper, 
-                        alpha=0.3, color=color1, label='95% Confidence Interval')
-        
-        # Add consensus AA mutation estimate if available
-        if consensus_info and consensus_info.get("consensus_mean") is not None:
-            consensus_mean = consensus_info["consensus_mean"]
-            consensus_std = consensus_info.get("consensus_std", 0.0)
-            ax1.axhline(
-                y=consensus_mean,
-                color='red',
-                linestyle='--',
-                alpha=0.7,
-                label=f"Consensus AA mutations ({consensus_mean:.3f}±{consensus_std:.3f})",
-            )
-        
-        ax1.set_xlabel('Quality Score Threshold', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Estimated AA Mutations per Gene', fontsize=12, fontweight='bold', color=color1)
-        ax1.tick_params(axis='y', labelcolor=color1)
-        ax1.set_title('AA Mutations per Gene vs Quality Score Filter (Segmentation-Based Error)', 
-                     fontsize=14, fontweight='bold')
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(frameon=False, fontsize=10)
-        
-        # Add data point labels
-        for i, (q, aa_mut, aa_err) in enumerate(zip(quality_thresholds, aa_mutations, aa_errors)):
-            ax1.annotate(f'Q{q}\n{aa_mut:.3f}±{aa_err:.3f}', 
-                        (q, aa_mut), xytext=(5, 5), 
-                        textcoords='offset points', fontsize=8, alpha=0.8, color=color1)
-        
-        # Bottom plot: Mappable bases and AA mutations per gene
-        color2 = '#FF6B6B'
-        color3 = '#4169E1'
-        
-        # Mappable bases (left y-axis)
-        ax2_twin = ax2.twinx()
-        ax2_twin.scatter(quality_thresholds, mappable_bases, 
-                        s=100, alpha=0.7, color=color2, edgecolors='black', 
-                        linewidth=1, marker='s', label='Mappable Bases')
-        ax2_twin.set_ylabel('Number of Mappable Bases', fontsize=12, fontweight='bold', color=color2)
-        ax2_twin.tick_params(axis='y', labelcolor=color2)
-        
-        # AA mutations per gene with error bars (right y-axis)
-        ax2.errorbar(quality_thresholds, aa_mutations, yerr=aa_errors,
-                    fmt='^', capsize=5, capthick=2, markersize=8,
-                    color=color3, ecolor=color3, alpha=0.8, label='AA Mutations ± Empirical Error')
-        ax2.set_ylabel('Estimated AA Mutations per Gene', fontsize=12, fontweight='bold', color=color3)
-        ax2.tick_params(axis='y', labelcolor=color3)
-        ax2.set_xlabel('Quality Score Threshold', fontsize=12, fontweight='bold')
-        ax2.set_title('Mappable Bases and AA Mutations per Gene vs Quality Score Filter', 
-                     fontsize=14, fontweight='bold')
-        ax2.grid(True, alpha=0.3)
-        
-        # Add legends
-        lines1, labels1 = ax2.get_legend_handles_labels()
-        lines2, labels2 = ax2_twin.get_legend_handles_labels()
-        ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper right', frameon=False, fontsize=10)
-        
-        # Add data point labels for mappable bases
-        for i, (q, bases) in enumerate(zip(quality_thresholds, mappable_bases)):
-            ax2_twin.annotate(f'{bases}', (q, bases), xytext=(5, -15), 
-                             textcoords='offset points', fontsize=8, alpha=0.8, color=color2)
-        
-        plt.tight_layout()
-        
-        # Create detailed/qc_plots/ subdirectory for QC plots
-        detailed_dir = os.path.join(results_dir, "detailed")
-        qc_plots_dir = os.path.join(detailed_dir, "qc_plots")
-        os.makedirs(qc_plots_dir, exist_ok=True)
-
-        # Save the plot to detailed/qc_plots/
-        project_name = os.path.basename(results_dir)
-        qc_plot_path = os.path.join(qc_plots_dir, f"qc_plot_{project_name}.png")
-        fig.savefig(qc_plot_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-        logging.info(f"QC plot saved to: {qc_plot_path}")
-
-        # Save data as CSV to detailed/
-        qc_data_path = os.path.join(detailed_dir, "simple_qc_data.csv")
-        with open(qc_data_path, 'w') as f:
-            f.write("quality_threshold,mean_aa_mutations,std_aa_mutations,ci_lower,ci_upper,")
-            f.write("total_mappable_bases,n_segments\n")
-
-            for q, r in zip(quality_thresholds, qc_results):
-                f.write(f"{q},{r['mean_aa_mutations']:.6f},{r['std_aa_mutations']:.6f},")
-                f.write(f"{r['ci_lower']:.6f},{r['ci_upper']:.6f},")
-                f.write(f"{r['total_mappable_bases']},{r['n_segments']}\n")
-
-        logging.info(f"Simple QC data saved to: {qc_data_path}")
-
-    except Exception as e:
-        logging.error(f"Error creating simple QC plots: {e}")
-
-def create_comprehensive_qc_plots(quality_thresholds, qc_results, results_dir):
-    """
-    Create comprehensive QC plots with error bars and uncertainty quantification.
-
-    Args:
-        quality_thresholds: List of quality score thresholds
-        qc_results: List of comprehensive analysis results
-        results_dir: Directory to save the plots
-    """
-    try:
-        # Create detailed/qc_plots/ subdirectory
-        detailed_dir = os.path.join(results_dir, "detailed")
-        qc_plots_dir = os.path.join(detailed_dir, "qc_plots")
-        os.makedirs(qc_plots_dir, exist_ok=True)
-
-        # Extract data for plotting
-        aa_mutations = [r['mean_aa_mutations'] for r in qc_results]
-        aa_errors = [r['std_aa_mutations'] for r in qc_results]
-        aa_ci_lower = [r['ci_lower'] for r in qc_results]
-        aa_ci_upper = [r['ci_upper'] for r in qc_results]
-        mappable_bases = [r['mappable_bases'] for r in qc_results]
-        net_rates = [r['net_rate'] for r in qc_results]
-        net_rate_errors = [r['net_rate_error'] for r in qc_results]
-
-        # Create main QC plot with error bars
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12))
-
-        # Top plot: AA mutations per gene with error bars
-        color1 = '#2E8B57'
-        ax1.errorbar(quality_thresholds, aa_mutations, yerr=aa_errors,
-                    fmt='o', capsize=5, capthick=2, markersize=8,
-                    color=color1, ecolor=color1, alpha=0.8, label='Mean ± Std')
-
-        # Add confidence intervals as shaded area
-        ax1.fill_between(quality_thresholds, aa_ci_lower, aa_ci_upper,
-                        alpha=0.3, color=color1, label='95% Confidence Interval')
-
-        ax1.set_xlabel('Quality Score Threshold', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Estimated AA Mutations per Gene', fontsize=12, fontweight='bold', color=color1)
-        ax1.tick_params(axis='y', labelcolor=color1)
-        ax1.set_title('AA Mutations per Gene vs Quality Score Filter (with Error Propagation)',
-                     fontsize=14, fontweight='bold')
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(frameon=False, fontsize=10)
-
-        # Add data point labels
-        for i, (q, aa_mut, aa_err) in enumerate(zip(quality_thresholds, aa_mutations, aa_errors)):
-            ax1.annotate(f'Q{q}\n{aa_mut:.3f}±{aa_err:.3f}',
-                        (q, aa_mut), xytext=(5, 5),
-                        textcoords='offset points', fontsize=8, alpha=0.8, color=color1)
-
-        # Bottom plot: Mappable bases and AA mutations per gene
-        color2 = '#FF6B6B'
-        color3 = '#4169E1'
-
-        # Mappable bases (left y-axis)
-        ax2_twin = ax2.twinx()
-        ax2_twin.scatter(quality_thresholds, mappable_bases,
-                        s=100, alpha=0.7, color=color2, edgecolors='black',
-                        linewidth=1, marker='s', label='Mappable Bases')
-        ax2_twin.set_ylabel('Number of Mappable Bases', fontsize=12, fontweight='bold', color=color2)
-        ax2_twin.tick_params(axis='y', labelcolor=color2)
-
-        # AA mutations per gene with error bars (right y-axis)
-        ax2.errorbar(quality_thresholds, aa_mutations, yerr=aa_errors,
-                    fmt='^', capsize=5, capthick=2, markersize=8,
-                    color=color3, ecolor=color3, alpha=0.8, label='AA Mutations ± Error')
-        ax2.set_ylabel('Estimated AA Mutations per Gene', fontsize=12, fontweight='bold', color=color3)
-        ax2.tick_params(axis='y', labelcolor=color3)
-        ax2.set_xlabel('Quality Score Threshold', fontsize=12, fontweight='bold')
-        ax2.set_title('Mappable Bases and AA Mutations per Gene vs Quality Score Filter',
-                     fontsize=14, fontweight='bold')
-        ax2.grid(True, alpha=0.3)
-
-        # Add legends
-        lines1, labels1 = ax2.get_legend_handles_labels()
-        lines2, labels2 = ax2_twin.get_legend_handles_labels()
-        ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper right', frameon=False, fontsize=10)
-
-        # Add data point labels for mappable bases
-        for i, (q, bases) in enumerate(zip(quality_thresholds, mappable_bases)):
-            ax2_twin.annotate(f'{bases}', (q, bases), xytext=(5, -15),
-                             textcoords='offset points', fontsize=8, alpha=0.8, color=color2)
-
-        plt.tight_layout()
-
-        # Save the comprehensive plot to detailed/qc_plots/
-        qc_plot_path = os.path.join(qc_plots_dir, "comprehensive_qc_analysis.png")
-        fig.savefig(qc_plot_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-        logging.info(f"Comprehensive QC plot saved to: {qc_plot_path}")
-
-        # Create error analysis plot
-        create_error_analysis_plot(quality_thresholds, qc_results, results_dir)
-
-        # Save comprehensive data as CSV to detailed/
-        qc_data_path = os.path.join(detailed_dir, "comprehensive_qc_data.csv")
-        with open(qc_data_path, 'w') as f:
-            f.write("quality_threshold,mean_aa_mutations,std_aa_mutations,ci_lower,ci_upper,")
-            f.write("mappable_bases,hit_rate,hit_rate_ci_lower,hit_rate_ci_upper,")
-            f.write("bg_rate,bg_rate_ci_lower,bg_rate_ci_upper,net_rate,net_rate_error,")
-            f.write("lambda_bp,lambda_error,alignment_error,")
-            f.write("hit_qscore_mean,hit_qscore_std,hit_qscore_uncertainty,")
-            f.write("bg_qscore_mean,bg_qscore_std,bg_qscore_uncertainty,")
-            f.write("hit_weighted_rate,hit_weighted_error,bg_weighted_rate,bg_weighted_error,")
-            f.write("net_weighted_rate,net_weighted_error,lambda_bp_weighted,lambda_error_weighted\n")
-
-            for q, r in zip(quality_thresholds, qc_results):
-                f.write(f"{q},{r['mean_aa_mutations']:.6f},{r['std_aa_mutations']:.6f},")
-                f.write(f"{r['ci_lower']:.6f},{r['ci_upper']:.6f},")
-                f.write(f"{r['mappable_bases']},{r['hit_rate']:.6f},")
-                f.write(f"{r['hit_rate_ci'][0]:.6f},{r['hit_rate_ci'][1]:.6f},")
-                f.write(f"{r['bg_rate']:.6f},{r['bg_rate_ci'][0]:.6f},{r['bg_rate_ci'][1]:.6f},")
-                f.write(f"{r['net_rate']:.6f},{r['net_rate_error']:.6f},")
-                f.write(f"{r['lambda_bp']:.6f},{r['lambda_error']:.6f},{r['alignment_error']:.6f},")
-
-                # Q-score information
-                hit_qscore_mean = r['hit_qscore_stats']['mean_qscore'] if r['hit_qscore_stats'] else 0.0
-                hit_qscore_std = r['hit_qscore_stats']['std_qscore'] if r['hit_qscore_stats'] else 0.0
-                bg_qscore_mean = r['bg_qscore_stats']['mean_qscore'] if r['bg_qscore_stats'] else 0.0
-                bg_qscore_std = r['bg_qscore_stats']['std_qscore'] if r['bg_qscore_stats'] else 0.0
-
-                f.write(f"{hit_qscore_mean:.2f},{hit_qscore_std:.2f},{r['hit_qscore_uncertainty']:.6f},")
-                f.write(f"{bg_qscore_mean:.2f},{bg_qscore_std:.2f},{r['bg_qscore_uncertainty']:.6f},")
-                f.write(f"{r.get('hit_weighted_rate', 0.0):.6f},{r.get('hit_weighted_error', 0.0):.6f},")
-                f.write(f"{r.get('bg_weighted_rate', 0.0):.6f},{r.get('bg_weighted_error', 0.0):.6f},")
-                f.write(f"{r.get('net_weighted_rate', 0.0):.6f},{r.get('net_weighted_error', 0.0):.6f},")
-                f.write(f"{r.get('lambda_bp_weighted', 0.0):.6f},{r.get('lambda_error_weighted', 0.0):.6f}\n")
-
-        logging.info(f"Comprehensive QC data saved to: {qc_data_path}")
-
-    except Exception as e:
-        logging.error(f"Error creating comprehensive QC plots: {e}")
-
-def create_error_analysis_plot(quality_thresholds, qc_results, results_dir):
-    """
-    Create a detailed error analysis plot showing different sources of uncertainty.
-
-    Args:
-        quality_thresholds: List of quality score thresholds
-        qc_results: List of comprehensive analysis results
-        results_dir: Directory to save the plot
-    """
-    try:
-        # Create detailed/qc_plots/ subdirectory
-        detailed_dir = os.path.join(results_dir, "detailed")
-        qc_plots_dir = os.path.join(detailed_dir, "qc_plots")
-        os.makedirs(qc_plots_dir, exist_ok=True)
-
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-
-        # Extract error components
-        aa_std = [r['std_aa_mutations'] for r in qc_results]
-        net_rate_errors = [r['net_rate_error'] for r in qc_results]
-        lambda_errors = [r['lambda_error'] for r in qc_results]
-        alignment_errors = [r['alignment_error'] for r in qc_results]
-        mappable_bases = [r['mappable_bases'] for r in qc_results]
-
-        # Plot 1: AA mutation uncertainty vs quality threshold
-        ax1.plot(quality_thresholds, aa_std, 'o-', color='#2E8B57', linewidth=2, markersize=6)
-        ax1.set_xlabel('Quality Score Threshold')
-        ax1.set_ylabel('AA Mutation Standard Deviation')
-        ax1.set_title('AA Mutation Uncertainty vs Quality Filter')
-        ax1.grid(True, alpha=0.3)
-
-        # Plot 2: Net rate error vs quality threshold
-        ax2.plot(quality_thresholds, net_rate_errors, 's-', color='#FF6B6B', linewidth=2, markersize=6)
-        ax2.set_xlabel('Quality Score Threshold')
-        ax2.set_ylabel('Net Mutation Rate Error')
-        ax2.set_title('Net Rate Error vs Quality Filter')
-        ax2.grid(True, alpha=0.3)
-
-        # Plot 3: Lambda error vs quality threshold
-        ax3.plot(quality_thresholds, lambda_errors, '^-', color='#4169E1', linewidth=2, markersize=6)
-        ax3.set_xlabel('Quality Score Threshold')
-        ax3.set_ylabel('Lambda Error (mutations per copy)')
-        ax3.set_title('Lambda Error vs Quality Filter')
-        ax3.grid(True, alpha=0.3)
-
-        # Plot 4: Alignment error vs mappable bases
-        ax4.scatter(mappable_bases, alignment_errors, s=100, alpha=0.7, color='#FF8C00')
-        ax4.set_xlabel('Mappable Bases')
-        ax4.set_ylabel('Alignment Error (1/sqrt(reads))')
-        ax4.set_title('Alignment Error vs Read Count')
-        ax4.grid(True, alpha=0.3)
-
-        # Add quality threshold labels to scatter plot
-        for i, q in enumerate(quality_thresholds):
-            ax4.annotate(f'Q{q}', (mappable_bases[i], alignment_errors[i]),
-                        xytext=(5, 5), textcoords='offset points', fontsize=8)
-
-        plt.tight_layout()
-
-        # Save error analysis plot to detailed/qc_plots/
-        error_plot_path = os.path.join(qc_plots_dir, "error_analysis.png")
-        fig.savefig(error_plot_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-        logging.info(f"Error analysis plot saved to: {error_plot_path}")
-
-    except Exception as e:
-        logging.error(f"Error creating error analysis plot: {e}")
-
-def create_qc_plot(quality_thresholds, aa_mutations, mappable_bases, results_dir):
-    """
-    Create a dual-axis plot showing quality score threshold vs AA mutations per gene and mappable bases.
-
-    Args:
-        quality_thresholds: List of quality score thresholds
-        aa_mutations: List of corresponding AA mutations per gene
-        mappable_bases: List of corresponding mappable bases
-        results_dir: Directory to save the plot
-    """
-    try:
-        # Create detailed/qc_plots/ subdirectory
-        detailed_dir = os.path.join(results_dir, "detailed")
-        qc_plots_dir = os.path.join(detailed_dir, "qc_plots")
-        os.makedirs(qc_plots_dir, exist_ok=True)
-
-        # Create the plot with dual y-axes
-        fig, ax1 = plt.subplots(figsize=(12, 8))
-
-        # Left y-axis: AA mutations per gene
-        color1 = '#2E8B57'
-        ax1.set_xlabel('Quality Score Threshold', fontsize=12, fontweight='bold')
-        ax1.set_ylabel('Estimated AA Mutations per Gene', fontsize=12, fontweight='bold', color=color1)
-        ax1.scatter(quality_thresholds, aa_mutations,
-                   s=100, alpha=0.7, color=color1, edgecolors='black', linewidth=1, label='AA Mutations per Gene')
-        ax1.tick_params(axis='y', labelcolor=color1)
-
-        # Right y-axis: Mappable bases
-        ax2 = ax1.twinx()
-        color2 = '#FF6B6B'
-        ax2.set_ylabel('Number of Mappable Bases', fontsize=12, fontweight='bold', color=color2)
-        ax2.scatter(quality_thresholds, mappable_bases,
-                   s=100, alpha=0.7, color=color2, edgecolors='black', linewidth=1, marker='s', label='Mappable Bases')
-        ax2.tick_params(axis='y', labelcolor=color2)
-
-        # Customize the plot
-        ax1.set_title('AA Mutations per Gene and Mappable Bases vs Quality Score Filter', fontsize=14, fontweight='bold')
-
-        # Add grid for better readability
-        ax1.grid(True, alpha=0.3)
-
-        # Customize ticks and spines
-        ax1.tick_params(axis='both', which='major', labelsize=10, direction='in', length=6)
-        ax1.tick_params(axis='both', which='minor', direction='in', length=3)
-        ax1.spines['top'].set_visible(False)
-        ax1.spines['right'].set_visible(False)
-
-        # Add data point labels for AA mutations
-        for i, (q, aa_mut) in enumerate(zip(quality_thresholds, aa_mutations)):
-            ax1.annotate(f'Q{q}', (q, aa_mut), xytext=(5, 5),
-                        textcoords='offset points', fontsize=9, alpha=0.8, color=color1)
-
-        # Add data point labels for mappable bases
-        for i, (q, bases) in enumerate(zip(quality_thresholds, mappable_bases)):
-            ax2.annotate(f'{bases}', (q, bases), xytext=(5, -15),
-                        textcoords='offset points', fontsize=8, alpha=0.8, color=color2)
-
-        # Add legend
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', frameon=False, fontsize=10)
-
-        # Save the plot to detailed/qc_plots/
-        qc_plot_path = os.path.join(qc_plots_dir, "qc_mutation_rate_vs_quality.png")
-        fig.savefig(qc_plot_path, dpi=300, bbox_inches='tight')
-        plt.close(fig)
-
-        logging.info(f"QC plot saved to: {qc_plot_path}")
-
-        # Also save data as CSV to detailed/qc_plots/
-        qc_data_path = os.path.join(qc_plots_dir, "qc_mutation_rate_vs_quality.csv")
-        with open(qc_data_path, 'w') as f:
-            f.write("quality_threshold,aa_mutations_per_gene,mappable_bases\n")
-            for q, aa_mut, bases in zip(quality_thresholds, aa_mutations, mappable_bases):
-                f.write(f"{q},{aa_mut:.6f},{bases}\n")
-
-        logging.info(f"QC data saved to: {qc_data_path}")
-
-    except Exception as e:
-        logging.error(f"Error creating QC plot: {e}")
 
 def extract_qscores_from_sam(sam_file):
     """
@@ -2001,7 +1554,7 @@ def simulate_aa_distribution(lambda_bp, cds_seq, n_trials=1000):
 
 def create_output_directories(results_dir):
     """
-    Create the output directory structure with detailed/ and detailed/qc_plots/ subdirectories.
+    Create the output directory structure with a detailed/ subdirectory.
 
     Args:
         results_dir: Base results directory path
@@ -2011,17 +1564,14 @@ def create_output_directories(results_dir):
     """
     results_dir = Path(results_dir)
     detailed_dir = results_dir / "detailed"
-    qc_plots_dir = detailed_dir / "qc_plots"
 
     detailed_dir.mkdir(parents=True, exist_ok=True)
-    qc_plots_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"Created output directories: {detailed_dir}, {qc_plots_dir}")
+    logging.info(f"Created output directories: {detailed_dir}")
 
     return {
         'results_dir': results_dir,
         'detailed_dir': detailed_dir,
-        'qc_plots_dir': qc_plots_dir,
     }
 
 def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mean, is_protein, hit_seq):
@@ -2060,10 +1610,10 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
         f.write("EXPECTED AMINO ACID MUTATIONS PER GENE COPY\n")
         f.write("-" * 45 + "\n")
         if is_protein and headline_aa is not None:
-            f.write(f"  {headline_aa:.2f} +/- {headline_std:.2f} AA mutations per gene copy\n")
+            f.write(f"  {headline_aa:.2f} +/- {headline_std:.2f} amino-acid mutations per gene copy\n")
             f.write(f"  (Method: {method_note})\n\n")
             f.write(
-                f"  Poisson lambda used in summary plots (bp mutations per copy): {simple_lambda:.6f}\n\n"
+                f"  Poisson lambda (net bp mutations per gene copy): {simple_lambda:.6f}\n\n"
             )
 
             # Plain-language interpretation using Poisson distribution
@@ -2077,9 +1627,9 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
                 # P(k>=2) = 1 - P(0) - P(1)
                 p_two_plus = 100 - p_wildtype - p_one_mut
 
-                f.write(f"  ~{p_wildtype:.1f}% of gene copies are wild-type (0 AA mutations)\n")
-                f.write(f"  ~{p_one_mut:.1f}% have exactly 1 AA mutation\n")
-                f.write(f"  ~{p_two_plus:.1f}% have 2 or more AA mutations\n\n")
+                f.write(f"  ~{p_wildtype:.1f}% of gene copies are wild-type (0 amino-acid changes)\n")
+                f.write(f"  ~{p_one_mut:.1f}% have exactly 1 amino-acid change\n")
+                f.write(f"  ~{p_two_plus:.1f}% have 2 or more amino-acid changes\n\n")
             else:
                 f.write("  Nearly all gene copies are expected to be wild-type.\n\n")
         else:
@@ -2109,181 +1659,12 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
             f.write("  UNKNOWN - Consensus analysis not available\n")
 
         f.write("\n")
-        f.write("FOR DETAILED TECHNICAL INFORMATION\n")
+        f.write("SUPPORTING DATA\n")
         f.write("-" * 45 + "\n")
-        f.write("  See the detailed/ folder for:\n")
-        f.write("    - methodology_notes.txt: Full explanation of calculations\n")
-        f.write("    - lambda_comparison.csv: Side-by-side lambda estimates\n")
-        f.write("    - comprehensive_qc_data.csv: All Q-score threshold results\n")
+        f.write("  See the detailed/ folder for per-gene CSVs and summary statistics.\n")
         f.write("\n")
 
     logging.info(f"Wrote KEY_FINDINGS.txt to: {key_findings_path}")
-
-def write_lambda_comparison(detailed_dir, simple_lambda, simple_aa_mean, consensus_info, hit_seq_length):
-    """
-    Write CSV comparing all lambda estimates side-by-side.
-
-    Args:
-        detailed_dir: Path to detailed/ directory
-        simple_lambda: Simple lambda (bp mutations per copy)
-        simple_aa_mean: Simple AA mutation mean from Monte Carlo
-        consensus_info: Consensus info from QC analysis
-        hit_seq_length: Length of the hit sequence
-    """
-    lambda_csv_path = Path(detailed_dir) / "lambda_comparison.csv"
-
-    with open(lambda_csv_path, "w") as f:
-        f.write("method,lambda_bp,lambda_error,aa_estimate,aa_error,notes\n")
-
-        # Simple method (from main analysis)
-        simple_error = "N/A"  # Simple method doesn't compute error
-        simple_aa_err = "N/A"
-        f.write(f"simple,(hit_rate - bg_rate) * seq_len,{simple_lambda:.6f},{simple_error},")
-        if simple_aa_mean is not None:
-            f.write(f"{simple_aa_mean:.4f},{simple_aa_err},")
-        else:
-            f.write("N/A,N/A,")
-        f.write("Used for KDE plot and Monte Carlo simulation\n")
-
-        # Consensus method (from QC analysis)
-        if consensus_info and consensus_info.get("consensus_mean") is not None:
-            consensus_mean = consensus_info["consensus_mean"]
-            consensus_std = consensus_info.get("consensus_std", 0.0)
-            thresholds = consensus_info.get("thresholds_used", [])
-            # Consensus is in AA mutations, back-calculate approximate lambda
-            # Rough approximation: lambda_bp ~ 3 * aa_mutations
-            approx_lambda = consensus_mean * 3.0
-            approx_lambda_err = consensus_std * 3.0
-            f.write(f"consensus_weighted,{approx_lambda:.6f},{approx_lambda_err:.6f},")
-            f.write(f"{consensus_mean:.4f},{consensus_std:.4f},")
-            f.write(f"Precision-weighted across Q-scores: {thresholds}\n")
-        else:
-            f.write("consensus_weighted,N/A,N/A,N/A,N/A,Not computed or insufficient data\n")
-
-    logging.info(f"Wrote lambda_comparison.csv to: {lambda_csv_path}")
-
-def write_methodology_notes(detailed_dir):
-    """
-    Write detailed methodology documentation explaining each lambda calculation method.
-
-    Args:
-        detailed_dir: Path to detailed/ directory
-    """
-    methodology_path = Path(detailed_dir) / "methodology_notes.txt"
-
-    content = """EP LIBRARY PROFILER - METHODOLOGY NOTES
-=======================================
-
-This document explains the different mutation rate estimates produced by the
-EP library profiler and which outputs use which estimates.
-
-
-LAMBDA CALCULATION METHODS
---------------------------
-
-1. SIMPLE LAMBDA (used for KDE plot and Monte Carlo simulation)
-
-   Formula: lambda_bp = (hit_rate - bg_rate) * sequence_length
-
-   Where:
-   - hit_rate = total_mismatches / total_covered_bases (in target region)
-   - bg_rate = total_mismatches / total_covered_bases (in plasmid excluding target)
-   - sequence_length = length of target CDS in base pairs
-
-   This method:
-   - Does NOT include error propagation
-   - Does NOT weight by Q-score
-   - Is fast and provides a point estimate
-
-   Used in:
-   - summary_panels.png/pdf (Panel 4: KDE of AA mutations)
-   - summary.txt
-   - aa_mutation_distribution.csv
-
-
-2. Q-SCORE WEIGHTED LAMBDA (used in comprehensive QC analysis)
-
-   Formula: lambda_bp_weighted = net_weighted_rate * sequence_length
-
-   Where:
-   - net_weighted_rate = hit_weighted_rate - bg_weighted_rate
-   - Weighted rates account for per-base Q-score uncertainty
-   - Weights = 1 - sqrt(10^(-Q/10)) for each position
-
-   This method:
-   - DOES include error propagation
-   - DOES weight by Q-score (higher Q-score = higher weight)
-   - Provides confidence intervals
-
-   Used in:
-   - comprehensive_qc_data.csv
-   - error_analysis.png
-
-
-3. CONSENSUS LAMBDA (recommended for reporting)
-
-   Formula: Precision-weighted average across Q-score thresholds
-
-   weights[i] = 1 / std_aa_mutations[i]
-   consensus_mean = sum(weights * means) / sum(weights)
-
-   This method:
-   - Aggregates estimates from multiple Q-score filtering thresholds
-   - Weights by precision (lower uncertainty = higher weight)
-   - Requires minimum coverage threshold (default 1000 mappable bases)
-   - Provides the most robust estimate when multiple thresholds pass QC
-
-   Used in:
-   - aa_mutation_consensus.txt
-   - KEY_FINDINGS.txt
-   - QC plots (red dashed line)
-
-
-WHICH VALUE SHOULD I USE?
--------------------------
-
-For publication/reporting:
-  Use the CONSENSUS value from aa_mutation_consensus.txt or KEY_FINDINGS.txt
-  This is the most statistically robust estimate.
-
-For understanding the distribution shape:
-  Use the KDE plot in summary_panels.png
-  Note: This uses the SIMPLE lambda, not the consensus.
-
-For detailed error analysis:
-  Use comprehensive_qc_data.csv in the detailed/ folder
-  This contains per-Q-score estimates with full error propagation.
-
-
-OUTPUT FILE REFERENCE
----------------------
-
-Root folder:
-  - KEY_FINDINGS.txt: Executive summary with consensus AA mutations
-  - summary_panels.png/pdf: Main visualization (uses simple lambda for KDE)
-  - aa_mutation_consensus.txt: Consensus estimate details
-
-detailed/ folder:
-  - methodology_notes.txt: This file
-  - lambda_comparison.csv: Side-by-side comparison of all methods
-  - comprehensive_qc_data.csv: Full QC data with error estimates
-  - simple_qc_data.csv: Simplified QC data
-  - gene_mismatch_rates.csv: Per-position mismatch rates
-  - base_distribution.csv: Base counts at each position
-  - aa_substitutions.csv: Amino acid substitution data
-  - plasmid_coverage.csv: Coverage across plasmid
-  - aa_mutation_distribution.csv: Monte Carlo AA mutation trials
-
-detailed/qc_plots/ folder:
-  - qc_plot_*.png: Q-score threshold analysis plot
-  - comprehensive_qc_analysis.png: Detailed QC visualization
-  - error_analysis.png: Error component breakdown
-"""
-
-    with open(methodology_path, "w") as f:
-        f.write(content)
-
-    logging.info(f"Wrote methodology_notes.txt to: {methodology_path}")
 
 def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, work_dir, results_dir, 
                                  chunks, ref_hit_fasta, plasmid_fasta, hit_seq, hit_id, plasmid_seq, idx):
@@ -2313,16 +1694,9 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     # Ensure work directory exists
     os.makedirs(work_dir, exist_ok=True)
 
-    # Create subdirectory for this Q-score analysis
-    qscore_results_dir = results_dir
-    if qscore is not None:
-        qscore_results_dir = os.path.join(results_dir, f"q{qscore}_analysis")
-        os.makedirs(qscore_results_dir, exist_ok=True)
-
-    # Create output directory structure (detailed/ and detailed/qc_plots/)
-    output_dirs = create_output_directories(qscore_results_dir)
+    # Create output directory structure
+    output_dirs = create_output_directories(results_dir)
     detailed_dir = output_dirs['detailed_dir']
-    qc_plots_dir = output_dirs['qc_plots_dir']
 
     # Write chunks FASTA & align to background‐chunks
     chunks_fasta = create_multi_fasta(chunks, work_dir)
@@ -2513,13 +1887,13 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     # --- Panel 1: Mutation rate over gene of interest ---
     ax0 = axes[0, 0]
     positions_gene = np.arange(1, len(hit_info["pos_rates"]) + 1)
-    ax0.axhspan(0, bg_rate, color='gray', alpha=0.3, label="Background rate")
+    ax0.axhspan(0, bg_rate, color='gray', alpha=0.3, label="Background mismatch rate")
     ax0.plot(positions_gene, hit_info["pos_rates"],
              color="#2E86AB", linestyle='-', linewidth=1.5, alpha=0.8,
-             label="Mutation rate")
-    ax0.set_title(f"Mismatch Rate per Position: Gene of Interest{qscore_info}", fontsize=14, fontweight='bold')
+             label="Mismatch rate (per base)")
+    ax0.set_title(f"Per-Position Mismatch Rate: Gene of Interest{qscore_info}", fontsize=14, fontweight='bold')
     ax0.set_xlabel("Position in Gene (bp)", fontsize=12)
-    ax0.set_ylabel("Mismatch Rate", fontsize=12)
+    ax0.set_ylabel("Mismatches per Base", fontsize=12)
     ax0.tick_params(axis='both', which='major', labelsize=10, direction='in', length=6)
     ax0.tick_params(axis='both', which='minor', direction='in', length=3)
     ax0.spines['top'].set_visible(False)
@@ -2564,9 +1938,9 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     ax1.plot(rolling_positions, rolling_rates,
              color="#FF6B6B", linestyle='-', linewidth=2, alpha=0.8,
              label="Rolling average (20 bp)")
-    ax1.set_title(f"Rolling Mutation Rate Across Plasmid (20 bp Window){qscore_info}", fontsize=14, fontweight='bold')
+    ax1.set_title(f"Rolling Mismatch Rate Across Plasmid (20 bp Window){qscore_info}", fontsize=14, fontweight='bold')
     ax1.set_xlabel("Position on Plasmid (bp)", fontsize=12)
-    ax1.set_ylabel("Mismatch Rate", fontsize=12)
+    ax1.set_ylabel("Mismatches per Base", fontsize=12)
     ax1.tick_params(axis='both', which='major', labelsize=10, direction='in', length=6)
     ax1.tick_params(axis='both', which='minor', direction='in', length=3)
     ax1.spines['top'].set_visible(False)
@@ -2623,9 +1997,9 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
             ax3.set_xlim(unique_vals[0] - 0.5, unique_vals[0] + 0.5)
 
         # Set title with lambda value for protein-coding sequences
-        ax3.set_title(f"AA Mutation Distribution (Monte Carlo, \u03bb={est_mut_per_copy:.2f}){qscore_info}",
+        ax3.set_title(f"AA Mutations per Gene Copy (Monte Carlo, \u03bb={est_mut_per_copy:.2f} bp mut/copy){qscore_info}",
                      fontsize=14, fontweight='bold')
-        ax3.set_xlabel("Number of AA Mutations", fontsize=12)
+        ax3.set_xlabel("Amino-Acid Mutations per Gene Copy", fontsize=12)
         ax3.set_ylabel("Density", fontsize=12)
         ax3.spines['top'].set_visible(False)
         ax3.spines['right'].set_visible(False)
@@ -2642,15 +2016,15 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
             transform=ax3.transAxes,
         )
 
-        ax3.set_title("AA Mutation Distribution", fontsize=14, fontweight='bold')
-        ax3.set_xlabel("Number of AA Mutations", fontsize=12)
+        ax3.set_title("AA Mutations per Gene Copy", fontsize=14, fontweight='bold')
+        ax3.set_xlabel("Amino-Acid Mutations per Gene Copy", fontsize=12)
         ax3.set_ylabel("Density", fontsize=12)
         ax3.spines['top'].set_visible(False)
         ax3.spines['right'].set_visible(False)
 
     # Save the combined figure as both PNG and PDF
-    panel_path_png = os.path.join(qscore_results_dir, "summary_panels.png")
-    panel_path_pdf = os.path.join(qscore_results_dir, "summary_panels.pdf")
+    panel_path_png = os.path.join(results_dir, "summary_panels.png")
+    panel_path_pdf = os.path.join(results_dir, "summary_panels.pdf")
     fig.savefig(panel_path_png, dpi=150, transparent=False)
     fig.savefig(panel_path_pdf)  # vector format
     plt.close(fig)
@@ -2739,35 +2113,32 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     # ----------------------------
     # WRITE PER-SAMPLE SUMMARY TXT
     # ----------------------------
-    sample_summary_path = os.path.join(qscore_results_dir, "summary.txt")
+    sample_summary_path = os.path.join(detailed_dir, "summary.txt")
     with open(sample_summary_path, "w") as txtf:
         txtf.write(f"Sample: {sample_name}\n")
         txtf.write(f"{'=' * (8 + len(sample_name))}\n\n")
         txtf.write("1) Background (plasmid excluding target):\n")
-        txtf.write(f"   • Total mismatches:    {bg_mis}\n")
-        txtf.write(f"   • Total covered bases: {bg_cov}\n")
-        txtf.write(f"   • Mapped reads:        {bg_reads}\n")
-        txtf.write(f"   • Rate (per base):     {bg_rate:.6e}\n")
-        txtf.write(f"   • Rate (per kb):       {bg_rate_per_kb:.6e}\n\n")
+        txtf.write(f"   • Total mismatches:                {bg_mis}\n")
+        txtf.write(f"   • Total covered bases:             {bg_cov}\n")
+        txtf.write(f"   • Mapped reads:                    {bg_reads}\n")
+        txtf.write(f"   • Mismatch rate (per base):        {bg_rate:.6e}\n")
+        txtf.write(f"   • Mismatch rate (per kb):          {bg_rate_per_kb:.6e}\n\n")
 
         txtf.write("2) Target (ROI) stats:\n")
-        txtf.write(f"   • Gene ID:            {hit_id}\n")
-        txtf.write(f"   • Total mismatches:   {hit_mis}\n")
-        txtf.write(f"   • Total covered bases:{hit_cov}\n")
-        txtf.write(f"   • Mapped reads:       {hit_reads}\n")
-        txtf.write(f"   • Rate (per base):    {hit_rate:.6e}\n")
-        txtf.write(f"   • Rate (per kb):      {hit_rate_per_kb:.6e}\n")
-        txtf.write(f"   • Z‐statistic:        {z_stat:.4f}\n")
-        txtf.write(f"   • p‐value:            {p_val if p_val is not None else 'N/A'}\n")
-        txtf.write(f"   • Estimated mutations per copy: {est_mut_per_copy:.6e}\n\n")
-        txtf.write(
-            f"   • Poisson lambda used in summary plots (bp mutations per copy): {est_mut_per_copy:.6e}\n\n"
-        )
+        txtf.write(f"   • Gene ID:                         {hit_id}\n")
+        txtf.write(f"   • Total mismatches:                {hit_mis}\n")
+        txtf.write(f"   • Total covered bases:             {hit_cov}\n")
+        txtf.write(f"   • Mapped reads:                    {hit_reads}\n")
+        txtf.write(f"   • Mismatch rate (per base):        {hit_rate:.6e}\n")
+        txtf.write(f"   • Mismatch rate (per kb):          {hit_rate_per_kb:.6e}\n")
+        txtf.write(f"   • Z‐statistic:                     {z_stat:.4f}\n")
+        txtf.write(f"   • p‐value:                         {p_val if p_val is not None else 'N/A'}\n")
+        txtf.write(f"   • Net bp mutations per gene copy (Poisson lambda): {est_mut_per_copy:.6e}\n\n")
 
         txtf.write("3) Protein‐coding evaluation:\n")
         txtf.write(f"   • Is protein: {is_protein}\n")
         if is_protein:
-            txtf.write(f"   • Average AA mutations per copy (simulated): {avg_aa_mutations:.3f}\n")
+            txtf.write(f"   • Avg AA mutations per gene copy (Monte Carlo): {avg_aa_mutations:.3f}\n")
         else:
             txtf.write(f"   • Reason(s): {('; '.join(reasons) if reasons else 'N/A')}\n")
         txtf.write("\n4) Mutation spectrum (above-background sites):\n")
@@ -2790,7 +2161,7 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
         'qscore': qscore,
         'qscore_desc': qscore_desc,
         'summary_path': sample_summary_path,
-        'qscore_results_dir': qscore_results_dir,
+        'results_dir': results_dir,
         'bg_mis': bg_mis,
         'bg_cov': bg_cov,
         'bg_reads': bg_reads,
@@ -3002,58 +2373,34 @@ def process_single_fastq(
         logging.error("QC analysis failed: %s", exc)
         logging.warning("Proceeding with unfiltered data only.")
 
-    qscores_to_analyze: List[tuple[Optional[int], str, str]] = []
-    qscores_to_analyze.append((None, str(fastq_path), 'unfiltered'))
+    # Run main analysis on unfiltered data only
+    logging.info("Running main analysis for unfiltered data...")
 
-    if qc_results is not None:
-        for result in qc_results:
-            qscore = result['quality_threshold']
-            filtered_fastq_path = work_dir / f"{sample_name}_q{qscore}.fastq.gz"
-            if run_nanofilt_filtering(str(fastq_path), qscore, str(filtered_fastq_path)):
-                qscores_to_analyze.append((qscore, str(filtered_fastq_path), f"Q{qscore}"))
-                logging.info("Successfully created Q%s filtered data for analysis.", qscore)
-            else:
-                logging.warning("Failed to create Q%s filtered data.", qscore)
-
-    logging.info(
-        "Will run main analysis for %s conditions: %s",
-        len(qscores_to_analyze),
-        [desc for _, _, desc in qscores_to_analyze],
+    unfiltered_result = run_main_analysis_for_qscore(
+        str(fastq_path),
+        None,
+        'unfiltered',
+        sample_name,
+        str(work_dir),
+        str(results_dir),
+        chunks,
+        str(region_fasta),
+        str(plasmid_fasta),
+        hit_seq,
+        hit_id,
+        plasmid_seq,
+        idx,
     )
+    analysis_results = [unfiltered_result]
 
-    analysis_results = []
-    for qscore, analysis_fastq_path, qscore_desc in qscores_to_analyze:
-        result = run_main_analysis_for_qscore(
-            analysis_fastq_path,
-            qscore,
-            qscore_desc,
-            sample_name,
-            str(work_dir),
-            str(results_dir),
-            chunks,
-            str(region_fasta),
-            str(plasmid_fasta),
-            hit_seq,
-            hit_id,
-            plasmid_seq,
-            idx,
-        )
-        analysis_results.append(result)
-
-    # Generate unified summary files in the sample's root results directory
-    # Get simple lambda from the unfiltered analysis (first result)
+    # Extract values from unfiltered analysis for KEY_FINDINGS.txt
     simple_lambda = 0.0
     simple_aa_mean = None
     is_protein = False
-    unfiltered_result = analysis_results[0] if analysis_results else None
     if unfiltered_result:
         simple_lambda = unfiltered_result.get('est_mut_per_copy', 0.0)
         simple_aa_mean = unfiltered_result.get('avg_aa_mutations')
         is_protein = unfiltered_result.get('is_protein', False)
-
-    # Create output directories and generate summary files
-    output_dirs = create_output_directories(results_dir)
-    detailed_dir = output_dirs['detailed_dir']
 
     # Write KEY_FINDINGS.txt (lay-user summary)
     write_key_findings(
@@ -3065,19 +2412,7 @@ def process_single_fastq(
         hit_seq,
     )
 
-    # Write lambda_comparison.csv
-    write_lambda_comparison(
-        detailed_dir,
-        simple_lambda,
-        simple_aa_mean,
-        consensus_info,
-        len(hit_seq),
-    )
-
-    # Write methodology_notes.txt
-    write_methodology_notes(detailed_dir)
-
-    logging.info("Generated unified summary files: KEY_FINDINGS.txt, lambda_comparison.csv, methodology_notes.txt")
+    logging.info("Generated summary files: KEY_FINDINGS.txt")
 
     if work_dir.exists():
         if _safe_rmtree(work_dir, allowed_base=base_work_dir, label="work"):
