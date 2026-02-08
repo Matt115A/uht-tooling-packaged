@@ -29,6 +29,86 @@ except ImportError:
     HAVE_SCIPY = False
     print("Warning: scipy is not installed. Z-test p-values and KDE may be limited.")
 
+WORKSPACE_SENTINEL = ".uht_tooling_workspace"
+
+
+def _workspace_root(path: Path) -> Optional[Path]:
+    try:
+        resolved = Path(path).resolve()
+    except FileNotFoundError:
+        resolved = Path(path).absolute()
+    for candidate in [resolved] + list(resolved.parents):
+        if (candidate / WORKSPACE_SENTINEL).exists():
+            return candidate
+    return None
+
+
+def _workspace_error(path: Path, purpose: str) -> str:
+    return (
+        f"Refusing to {purpose} at '{path}'. This location is not inside a uht_tooling "
+        "workspace.\n\n"
+        "To fix:\n"
+        "1. Create a dedicated workspace directory.\n"
+        "2. Add a sentinel file named '.uht_tooling_workspace' inside it.\n"
+        "3. Use output/work directories inside that workspace.\n\n"
+        "Example:\n"
+        "  mkdir -p ~/uht_tooling_workspace\n"
+        "  touch ~/uht_tooling_workspace/.uht_tooling_workspace\n"
+        "  # then set output/work dirs under ~/uht_tooling_workspace\n"
+    )
+
+
+def _ensure_workspace(path: Path, purpose: str) -> Path:
+    root = _workspace_root(path)
+    if root is None:
+        raise ValueError(_workspace_error(path, purpose))
+    return root
+
+
+def _maybe_init_temp_workspace(path: Path) -> Optional[Path]:
+    try:
+        resolved = Path(path).resolve()
+    except FileNotFoundError:
+        return None
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    if resolved == tmp_root or tmp_root in resolved.parents:
+        sentinel_path = resolved / WORKSPACE_SENTINEL
+        if not sentinel_path.exists():
+            try:
+                sentinel_path.write_text("workspace\n")
+            except OSError:
+                return None
+        return resolved
+    return None
+
+
+def _safe_rmtree(path: Optional[Path], *, allowed_base: Optional[Path] = None, label: str = "") -> bool:
+    if not path:
+        return False
+    try:
+        resolved = Path(path).resolve()
+    except FileNotFoundError:
+        return False
+    cwd = Path.cwd().resolve()
+    home = Path.home().resolve()
+    if resolved in {Path("/"), cwd, home}:
+        logging.warning("Refusing to remove %s path: %s", label or "unsafe", resolved)
+        return False
+    if allowed_base is not None:
+        base_resolved = Path(allowed_base).resolve()
+        if resolved != base_resolved and base_resolved not in resolved.parents:
+            logging.warning(
+                "Refusing to remove %s path outside %s: %s",
+                label or "unsafe",
+                base_resolved,
+                resolved,
+            )
+            return False
+    if resolved.exists():
+        shutil.rmtree(resolved)
+        return True
+    return False
+
 def setup_logging(log_dir):
     """
     Configure logging so that INFO (and above) go into run.log inside log_dir.
@@ -560,8 +640,17 @@ def run_qc_analysis(fastq_path, results_dir, ref_hit_fasta, plasmid_fasta):
         # Clean up segment files
         segment_dir = os.path.dirname(segment_files[0])
         if os.path.exists(segment_dir):
-            shutil.rmtree(segment_dir)
-            logging.info(f"Cleaned up segment directory: {segment_dir}")
+            workspace_root = _workspace_root(Path(segment_dir))
+            if workspace_root is None:
+                logging.warning(
+                    "Skipping cleanup of segment directory outside a uht_tooling workspace: %s\n"
+                    "To allow cleanup, move inputs into a workspace containing '%s'.",
+                    segment_dir,
+                    WORKSPACE_SENTINEL,
+                )
+            else:
+                if _safe_rmtree(Path(segment_dir), allowed_base=workspace_root, label="segment"):
+                    logging.info(f"Cleaned up segment directory: {segment_dir}")
         
         # Return QC results and consensus information for downstream analysis
         return qc_results, consensus_info
@@ -2698,6 +2787,7 @@ def run_ep_library_profile(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
+    _maybe_init_temp_workspace(output_dir)
 
     master_summary_path = output_dir / "master_summary.txt"
     header = "\t".join(
@@ -2761,6 +2851,9 @@ def process_single_fastq(
     base_work_dir = Path(base_work_dir)
     base_results_dir = Path(base_results_dir)
 
+    _ensure_workspace(base_work_dir, "clean work directories")
+    _ensure_workspace(base_results_dir, "clean result directories")
+
     sample_name = fastq_path.name
     if sample_name.endswith('.fastq.gz'):
         sample_name = sample_name[:-9]
@@ -2771,9 +2864,9 @@ def process_single_fastq(
     results_dir = base_results_dir / sample_name
 
     if work_dir.exists():
-        shutil.rmtree(work_dir)
+        _safe_rmtree(work_dir, allowed_base=base_work_dir, label="work")
     if results_dir.exists():
-        shutil.rmtree(results_dir)
+        _safe_rmtree(results_dir, allowed_base=base_results_dir, label="results")
 
     work_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -2923,8 +3016,8 @@ def process_single_fastq(
     logging.info("Generated unified summary files: KEY_FINDINGS.txt, lambda_comparison.csv, methodology_notes.txt")
 
     if work_dir.exists():
-        shutil.rmtree(work_dir)
-        logging.info("Removed temporary work directory: %s", work_dir)
+        if _safe_rmtree(work_dir, allowed_base=base_work_dir, label="work"):
+            logging.info("Removed temporary work directory: %s", work_dir)
 
     logging.info("--- Finished analysis for sample: %s ---", sample_name)
 
@@ -2934,4 +3027,3 @@ def process_single_fastq(
         "analysis_results": analysis_results,
         "consensus_info": consensus_info,
     }
-

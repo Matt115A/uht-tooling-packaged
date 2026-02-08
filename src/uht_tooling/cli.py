@@ -465,7 +465,10 @@ def ep_library_profile_command(
         "-o",
         dir_okay=True,
         writable=True,
-        help="Directory for per-sample outputs.",
+        help=(
+            "Directory for per-sample outputs. Must be inside a workspace containing "
+            "a '.uht_tooling_workspace' sentinel file."
+        ),
     ),
     work_dir: Optional[Path] = typer.Option(
         None,
@@ -473,7 +476,10 @@ def ep_library_profile_command(
         "-w",
         dir_okay=True,
         writable=True,
-        help="Optional scratch directory for intermediate files (defaults to output/tmp).",
+        help=(
+            "Optional scratch directory for intermediate files (defaults to output/tmp). "
+            "Must be inside a workspace containing a '.uht_tooling_workspace' sentinel file."
+        ),
     ),
 ):
     """Quantify mutation rates for ep-library sequencing experiments."""

@@ -358,6 +358,14 @@ Please be aware, this toolkit will not scale well beyond around 50k reads/sample
     --fastq data/ep-library-profile/*.fastq.gz \
     --output-dir results/ep-library-profile/
   ```
+- Safety note: `--output-dir` (and `--work-dir` if used) must live inside a dedicated workspace
+  containing a `.uht_tooling_workspace` file. This prevents accidental deletion of unrelated folders.
+  Example:
+  ```bash
+  mkdir -p ~/uht_tooling_workspace
+  touch ~/uht_tooling_workspace/.uht_tooling_workspace
+  # then use --output-dir ~/uht_tooling_workspace/ep-library-profile/
+  ```
 
 **Output structure**
 

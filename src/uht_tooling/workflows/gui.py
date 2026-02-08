@@ -45,9 +45,25 @@ def _ensure_text(value: str, field: str) -> str:
     return value
 
 
-def _clean_temp_path(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path, ignore_errors=True)
+def _clean_temp_path(path: Optional[Path]) -> None:
+    if not path:
+        return
+    try:
+        resolved = path.resolve()
+    except FileNotFoundError:
+        return
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    if resolved == tmp_root:
+        _LOGGER.warning("Refusing to remove temp root: %s", resolved)
+        return
+    if not resolved.name.startswith("uht_gui_"):
+        _LOGGER.warning("Refusing to remove non-GUI temp path: %s", resolved)
+        return
+    if tmp_root not in resolved.parents:
+        _LOGGER.warning("Refusing to remove path outside temp dir: %s", resolved)
+        return
+    if resolved.exists():
+        shutil.rmtree(resolved, ignore_errors=True)
 
 
 def _zip_paths(paths: Iterable[Path], prefix: str) -> Path:
@@ -124,6 +140,8 @@ def _find_server_port(host: str, preferred: Optional[int]) -> int:
 # ---------------------------------------------------------------------------
 
 def run_gui_nextera(forward_primer: str, reverse_primer: str) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
     try:
         forward = _ensure_text(forward_primer, "Forward primer")
         reverse = _ensure_text(reverse_primer, "Reverse primer")
@@ -144,8 +162,8 @@ def run_gui_nextera(forward_primer: str, reverse_primer: str) -> Tuple[str, Opti
         _LOGGER.exception("Nextera GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
-        _clean_temp_path(locals().get("work_dir", Path()))
-        _clean_temp_path(locals().get("output_dir", Path()))
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
 
 
 def run_gui_design_slim(
@@ -153,6 +171,8 @@ def run_gui_design_slim(
     context_content: str,
     mutations_text: str,
 ) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
     try:
         gene_seq = _ensure_text(template_gene_content, "Template gene sequence")
         context_seq = _ensure_text(context_content, "Context sequence")
@@ -185,8 +205,8 @@ def run_gui_design_slim(
         _LOGGER.exception("SLIM GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
-        _clean_temp_path(locals().get("work_dir", Path()))
-        _clean_temp_path(locals().get("output_dir", Path()))
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
 
 
 def run_gui_design_kld(
@@ -194,6 +214,8 @@ def run_gui_design_kld(
     context_content: str,
     mutations_text: str,
 ) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
     try:
         gene_seq = _ensure_text(template_gene_content, "Template gene sequence")
         context_seq = _ensure_text(context_content, "Context sequence")
@@ -226,8 +248,8 @@ def run_gui_design_kld(
         _LOGGER.exception("KLD GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
-        _clean_temp_path(locals().get("work_dir", Path()))
-        _clean_temp_path(locals().get("output_dir", Path()))
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
 
 
 def run_gui_design_gibson(
@@ -235,6 +257,8 @@ def run_gui_design_gibson(
     context_content: str,
     mutations_text: str,
 ) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
     try:
         gene_seq = _ensure_text(template_gene_content, "Template gene sequence")
         context_seq = _ensure_text(context_content, "Context sequence")
@@ -277,8 +301,8 @@ def run_gui_design_gibson(
         _LOGGER.exception("Gibson GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
-        _clean_temp_path(locals().get("work_dir", Path()))
-        _clean_temp_path(locals().get("output_dir", Path()))
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
 
 
 def run_gui_mutation_caller(
@@ -548,6 +572,7 @@ def run_gui_ep_library_profile(
     region_fasta: Optional[str],
     plasmid_fasta: Optional[str],
 ) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
     try:
         # Validate required external tools
         try:
@@ -583,7 +608,7 @@ def run_gui_ep_library_profile(
         _LOGGER.exception("EP library profile GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
-        _clean_temp_path(locals().get("work_dir", Path()))
+        _clean_temp_path(work_dir)
 
 
 # ---------------------------------------------------------------------------
