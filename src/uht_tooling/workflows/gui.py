@@ -1042,9 +1042,10 @@ def create_gui() -> gr.Blocks:
                 """
                 ### Library Profiling Without UMIs
                     Estimates background and target mutation rates for enzyme evolution libraries without UMI barcodes.
+                    Upload one or more FASTQ files; each file is profiled individually and results are collected into a single output archive.
 
                     **Inputs**
-                    - FASTQ reads (*.fastq/.gz) from the ep-library experiment.
+                    - One or more FASTQ files (*.fastq/.gz) from the ep-library experiment.
                     - Region-of-interest FASTA delineating the mutational window.
                     - Plasmid FASTA providing the full reference context.
 
@@ -1056,7 +1057,7 @@ def create_gui() -> gr.Blocks:
                 )
             )
             ep_fastq = gr.File(
-                label="FASTQ files",
+                label="FASTQ file(s) — upload multiple to profile each individually",
                 file_types=[".fastq", ".gz"],
                 file_count="multiple",
                 type="filepath",
