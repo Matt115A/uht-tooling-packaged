@@ -74,8 +74,8 @@ def _maybe_init_temp_workspace(path: Path) -> Optional[Path]:
         resolved = Path(path).resolve()
     except FileNotFoundError:
         return None
-    tmp_root = Path(tempfile.gettempdir()).resolve()
-    if resolved == tmp_root or tmp_root in resolved.parents:
+    tmp_roots = _temp_roots()
+    if any(resolved == root or root in resolved.parents for root in tmp_roots):
         sentinel_path = resolved / WORKSPACE_SENTINEL
         if not sentinel_path.exists():
             try:
@@ -91,8 +91,14 @@ def _is_temp_path(path: Path) -> bool:
         resolved = Path(path).resolve()
     except FileNotFoundError:
         return False
-    tmp_root = Path(tempfile.gettempdir()).resolve()
-    return resolved == tmp_root or tmp_root in resolved.parents
+    tmp_roots = _temp_roots()
+    return any(resolved == root or root in resolved.parents for root in tmp_roots)
+
+
+def _temp_roots() -> List[Path]:
+    roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+    roots.add(Path("/private/tmp").resolve())
+    return [root for root in roots if root.exists()]
 
 
 def _safe_rmtree(path: Optional[Path], *, allowed_base: Optional[Path] = None, label: str = "") -> bool:
@@ -404,25 +410,56 @@ def run_nanofilt_filtering(input_fastq, quality_threshold, output_fastq):
         bool: True if successful, False otherwise
     """
     try:
-        # Use gunzip to decompress, pipe to NanoFilt with length filter, then compress output
-        cmd = f"gunzip -c {input_fastq} | NanoFilt -q {quality_threshold} -l 30 | gzip > {output_fastq}"
-        logging.info(f"Running NanoFilt with quality threshold {quality_threshold} and min length 30bp: {cmd}")
-        
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0:
-            logging.error(f"NanoFilt failed with return code {result.returncode}: {result.stderr}")
+        logging.info(
+            "Running NanoFilt with quality threshold %s and min length 30bp: %s -> %s",
+            quality_threshold,
+            input_fastq,
+            output_fastq,
+        )
+
+        with open(output_fastq, "wb") as out_fh:
+            gunzip_proc = subprocess.Popen(
+                ["gunzip", "-c", input_fastq],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            nanofilt_proc = subprocess.Popen(
+                ["NanoFilt", "-q", str(quality_threshold), "-l", "30"],
+                stdin=gunzip_proc.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            gunzip_proc.stdout.close()
+            gzip_proc = subprocess.Popen(
+                ["gzip"],
+                stdin=nanofilt_proc.stdout,
+                stdout=out_fh,
+                stderr=subprocess.PIPE,
+            )
+            nanofilt_proc.stdout.close()
+
+            _, gunzip_err = gunzip_proc.communicate()
+            _, nanofilt_err = nanofilt_proc.communicate()
+            _, gzip_err = gzip_proc.communicate()
+
+        if gunzip_proc.returncode != 0:
+            logging.error("gunzip failed (%s): %s", gunzip_proc.returncode, gunzip_err.decode())
             return False
-        
-        # Check if output file was created and has content
+        if nanofilt_proc.returncode != 0:
+            logging.error("NanoFilt failed (%s): %s", nanofilt_proc.returncode, nanofilt_err.decode())
+            return False
+        if gzip_proc.returncode != 0:
+            logging.error("gzip failed (%s): %s", gzip_proc.returncode, gzip_err.decode())
+            return False
+
         if os.path.exists(output_fastq) and os.path.getsize(output_fastq) > 0:
-            logging.info(f"Successfully created filtered FASTQ: {output_fastq}")
+            logging.info("Successfully created filtered FASTQ: %s", output_fastq)
             return True
-        else:
-            logging.error(f"Output file {output_fastq} was not created or is empty")
-            return False
-            
+        logging.error("Output file %s was not created or is empty", output_fastq)
+        return False
+
     except Exception as e:
-        logging.error(f"Error running NanoFilt: {e}")
+        logging.error("Error running NanoFilt: %s", e)
         return False
 
 def calculate_mutation_rate_for_quality(fastq_path, quality_threshold, work_dir, ref_hit_fasta, plasmid_fasta):
@@ -574,17 +611,21 @@ def run_qc_analysis(fastq_path, results_dir, ref_hit_fasta, plasmid_fasta):
     quality_thresholds = [10, 12, 14, 16, 18, 20, 22, 24, 26]
     
     
-    # Segment the input FASTQ file
-    logging.info("Segmenting FASTQ file into 10 parts for error estimation...")
-    segment_files = segment_fastq_file(fastq_path, n_segments=10)
-    
-    if not segment_files:
-        logging.error("Failed to segment FASTQ file")
-        return
-    
     # Create temporary work directory for QC analysis
     with tempfile.TemporaryDirectory() as qc_work_dir:
         logging.info(f"Using temporary work directory: {qc_work_dir}")
+
+        # Segment the input FASTQ file into the temp workspace
+        logging.info("Segmenting FASTQ file into 10 parts for error estimation...")
+        segment_files = segment_fastq_file(
+            fastq_path,
+            n_segments=10,
+            output_dir=qc_work_dir,
+        )
+
+        if not segment_files:
+            logging.error("Failed to segment FASTQ file")
+            return
         
         # Calculate results for each quality threshold
         qc_results = []
@@ -1264,7 +1305,7 @@ def qscore_uncertainty_factor(qscore):
     
     return uncertainty_factor
 
-def segment_fastq_file(input_fastq, n_segments=10):
+def segment_fastq_file(input_fastq, n_segments=10, output_dir: Optional[str] = None):
     """
     Segment a FASTQ file into N parts for error estimation.
     
@@ -1281,7 +1322,10 @@ def segment_fastq_file(input_fastq, n_segments=10):
         
         # Create output directory
         base_name = os.path.splitext(os.path.basename(input_fastq))[0].replace('.fastq', '')
-        segment_dir = os.path.join(os.path.dirname(input_fastq), f"{base_name}_segments")
+        if output_dir:
+            segment_dir = os.path.join(output_dir, f"{base_name}_segments")
+        else:
+            segment_dir = os.path.join(os.path.dirname(input_fastq), f"{base_name}_segments")
         os.makedirs(segment_dir, exist_ok=True)
         
         # Open output files
@@ -2018,6 +2062,9 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
         if is_protein and headline_aa is not None:
             f.write(f"  {headline_aa:.2f} +/- {headline_std:.2f} AA mutations per gene copy\n")
             f.write(f"  (Method: {method_note})\n\n")
+            f.write(
+                f"  Poisson lambda used in summary plots (bp mutations per copy): {simple_lambda:.6f}\n\n"
+            )
 
             # Plain-language interpretation using Poisson distribution
             f.write("WHAT THIS MEANS (Poisson distribution):\n")
@@ -2713,6 +2760,9 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
         txtf.write(f"   • Z‐statistic:        {z_stat:.4f}\n")
         txtf.write(f"   • p‐value:            {p_val if p_val is not None else 'N/A'}\n")
         txtf.write(f"   • Estimated mutations per copy: {est_mut_per_copy:.6e}\n\n")
+        txtf.write(
+            f"   • Poisson lambda used in summary plots (bp mutations per copy): {est_mut_per_copy:.6e}\n\n"
+        )
 
         txtf.write("3) Protein‐coding evaluation:\n")
         txtf.write(f"   • Is protein: {is_protein}\n")
