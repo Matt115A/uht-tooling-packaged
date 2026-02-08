@@ -61,6 +61,8 @@ def _workspace_error(path: Path, purpose: str) -> str:
 def _ensure_workspace(path: Path, purpose: str) -> Path:
     root = _workspace_root(path)
     if root is None:
+        root = _maybe_init_temp_workspace(path)
+    if root is None:
         raise ValueError(_workspace_error(path, purpose))
     return root
 
@@ -2788,6 +2790,7 @@ def run_ep_library_profile(
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir.mkdir(parents=True, exist_ok=True)
     _maybe_init_temp_workspace(output_dir)
+    _maybe_init_temp_workspace(work_dir)
 
     master_summary_path = output_dir / "master_summary.txt"
     header = "\t".join(
