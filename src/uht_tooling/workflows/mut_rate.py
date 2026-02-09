@@ -550,217 +550,6 @@ def calculate_mutation_rate_for_quality(fastq_path, quality_threshold, work_dir,
         logging.error(f"Error calculating mutation rate for quality {quality_threshold}: {e}")
         return None
 
-def find_optimal_qscore(qc_results):
-    """
-    Find the Q-score threshold with the lowest net mutation rate error.
-    
-    Args:
-        qc_results: List of comprehensive analysis results
-    
-    Returns:
-        tuple: (optimal_qscore, optimal_result, error_comparison)
-    """
-    logging.info("=== FINDING OPTIMAL Q-SCORE THRESHOLD ===")
-    
-    if not qc_results:
-        return None, None, None
-    
-    # Find Q-score with minimum net mutation rate error
-    min_error = float('inf')
-    optimal_result = None
-    optimal_qscore = None
-    
-    error_comparison = []
-    
-    for result in qc_results:
-        qscore = result['quality_threshold']
-        # Use weighted error for optimal Q-score selection
-        net_rate_error = result.get('net_weighted_error', result['net_rate_error'])
-        mappable_bases = result['mappable_bases']
-        
-        error_comparison.append({
-            'qscore': qscore,
-            'net_rate_error': net_rate_error,
-            'net_weighted_error': result.get('net_weighted_error', 0.0),
-            'mappable_bases': mappable_bases,
-            'aa_mutations': result['mean_aa_mutations'],
-            'aa_error': result['std_aa_mutations']
-        })
-        
-        logging.info(f"Q{qscore}: net_weighted_error={net_rate_error:.6f}, mappable_bases={mappable_bases}")
-        
-        if net_rate_error < min_error:
-            min_error = net_rate_error
-            optimal_result = result
-            optimal_qscore = qscore
-    
-    logging.info(f"OPTIMAL Q-SCORE: Q{optimal_qscore} (lowest net mutation rate error: {min_error:.6f})")
-    logging.info(f"Optimal result: AA mutations = {optimal_result['mean_aa_mutations']:.4f} ± {optimal_result['std_aa_mutations']:.4f}")
-    
-    return optimal_qscore, optimal_result, error_comparison
-
-def run_qc_analysis(fastq_path, results_dir, ref_hit_fasta, plasmid_fasta):
-    """
-    Run simple QC analysis using segmentation-based error estimation.
-    
-    Args:
-        fastq_path: Path to input FASTQ.gz file
-        results_dir: Directory to save QC results
-    """
-    logging.info("Starting simple QC analysis with segmentation-based error estimation")
-    
-    # Define quality thresholds to test
-    quality_thresholds = [10, 12, 14, 16, 18, 20, 22, 24, 26]
-    
-    
-    # Create temporary work directory for QC analysis
-    with tempfile.TemporaryDirectory() as qc_work_dir:
-        logging.info(f"Using temporary work directory: {qc_work_dir}")
-
-        # Segment the input FASTQ file into the temp workspace
-        logging.info("Segmenting FASTQ file into 10 parts for error estimation...")
-        segment_files = segment_fastq_file(
-            fastq_path,
-            n_segments=10,
-            output_dir=qc_work_dir,
-        )
-
-        if not segment_files:
-            logging.error("Failed to segment FASTQ file")
-            return
-        
-        # Calculate results for each quality threshold
-        qc_results = []
-        successful_thresholds = []
-        
-        for q_threshold in quality_thresholds:
-            logging.info(f"Processing quality threshold: {q_threshold}")
-            result = run_segmented_analysis(
-                segment_files, q_threshold, qc_work_dir, ref_hit_fasta, plasmid_fasta
-            )
-            
-            if result is not None:
-                qc_results.append(result)
-                successful_thresholds.append(q_threshold)
-                logging.info(f"Quality {q_threshold}: AA mutations = {result['mean_aa_mutations']:.4f} ± {result['std_aa_mutations']:.4f}, "
-                           f"mappable bases = {result['total_mappable_bases']}")
-            else:
-                logging.warning(f"Failed to calculate mutation rate for quality threshold {q_threshold}")
-        
-        # Derive consensus AA mutation estimates across valid Q-score thresholds
-        consensus_info, _ = compute_consensus_aa_mutation(qc_results)
-        
-        logging.info("QC computation complete (consensus info will feed KEY_FINDINGS.txt)")
-        
-        # Clean up segment files
-        segment_dir = os.path.dirname(segment_files[0])
-        if os.path.exists(segment_dir):
-            workspace_root = _workspace_root(Path(segment_dir))
-            if workspace_root is None:
-                logging.warning(
-                    "Skipping cleanup of segment directory outside a uht_tooling workspace: %s\n"
-                    "To allow cleanup, move inputs into a workspace containing '%s'.",
-                    segment_dir,
-                    WORKSPACE_SENTINEL,
-                )
-            else:
-                if _safe_rmtree(Path(segment_dir), allowed_base=workspace_root, label="segment"):
-                    logging.info(f"Cleaned up segment directory: {segment_dir}")
-        
-        # Return QC results and consensus information for downstream analysis
-        return qc_results, consensus_info
-
-def compute_consensus_aa_mutation(
-    qc_results: List[dict],
-    min_mappable_bases: int = 1000,
-) -> Tuple[Optional[dict], List[dict]]:
-    """
-    Derive a consensus amino-acid mutation estimate across Q-score thresholds.
-    
-    Each threshold must meet a minimum coverage requirement. The consensus is a
-    precision-weighted average (weights = 1 / std_aa_mutations).
-    
-    Returns:
-        consensus_info (dict or None)
-            {
-                'consensus_mean': float,
-                'consensus_std': float,
-                'thresholds_used': List[int],
-                'weights': List[float],
-                'min_mappable_bases': int,
-            }
-        valid_results: list of QC result dicts that were included in the consensus
-    """
-    if not qc_results:
-        return None, []
-
-    valid_results = []
-    for result in qc_results:
-        total_bases = result.get("total_mappable_bases", 0)
-        std_aa = result.get("std_aa_mutations", 0.0)
-        if total_bases is None:
-            total_bases = 0
-        if total_bases >= min_mappable_bases and std_aa is not None:
-            valid_results.append(result)
-
-    if not valid_results:
-        logging.warning(
-            "No Q-score thresholds met the minimum mappable base requirement (%s). "
-            "Consensus AA mutation rate will fall back to the threshold with the highest coverage.",
-            min_mappable_bases,
-        )
-        best_by_coverage = max(qc_results, key=lambda r: r.get("total_mappable_bases", 0))
-        fallback_std = best_by_coverage.get("std_aa_mutations", 0.0)
-        consensus_info = {
-            "consensus_mean": best_by_coverage.get("mean_aa_mutations", 0.0),
-            "consensus_std": fallback_std,
-            "thresholds_used": [best_by_coverage.get("quality_threshold")],
-            "weights": [1.0],
-            "min_mappable_bases": min_mappable_bases,
-            "note": "FELL_BACK_TO_MAX_COVERAGE",
-        }
-        return consensus_info, [best_by_coverage]
-
-    weights = []
-    means = []
-    variances = []
-    thresholds = []
-    for result in valid_results:
-        std_aa = result.get("std_aa_mutations", 0.0) or 0.0
-        weight = 1.0 / max(std_aa, 1e-9)  # Avoid division by zero; effectively a very large weight.
-        weights.append(weight)
-        means.append(result.get("mean_aa_mutations", 0.0))
-        variances.append(std_aa**2)
-        thresholds.append(result.get("quality_threshold"))
-
-    weight_sum = float(np.sum(weights))
-    normalized_weights = [w / weight_sum for w in weights]
-    consensus_mean = float(np.sum(np.array(normalized_weights) * np.array(means)))
-
-    combined_variance = 0.0
-    for w, mean, var in zip(normalized_weights, means, variances):
-        combined_variance += w * (var + (mean - consensus_mean) ** 2)
-    combined_variance = max(combined_variance, 0.0)
-    consensus_std = float(np.sqrt(combined_variance))
-
-    consensus_info = {
-        "consensus_mean": consensus_mean,
-        "consensus_std": consensus_std,
-        "thresholds_used": thresholds,
-        "weights": normalized_weights,
-        "min_mappable_bases": min_mappable_bases,
-        "note": "WEIGHTED_AVERAGE",
-    }
-
-    logging.info(
-        "Consensus AA mutation estimate: %.4f ± %.4f (thresholds used: %s)",
-        consensus_mean,
-        consensus_std,
-        thresholds,
-    )
-    
-    return consensus_info, valid_results
-
 def extract_qscores_from_sam(sam_file):
     """
     Extract Q-scores from SAM file and calculate statistics.
@@ -1414,14 +1203,8 @@ def comprehensive_aa_mutation_analysis(hit_mis, hit_cov, bg_mis, bg_cov, cds_seq
     )
     logging.info(f"   Net mutation rate: {net_rate:.6f} ± {net_rate_error:.6f}")
     
-    # 3. Calculate lambda_bp with error
-    logging.info("3. Calculating lambda_bp (mutations per copy) with error propagation...")
-    lambda_bp = net_rate * len(cds_seq)
-    lambda_error = net_rate_error * len(cds_seq)
-    logging.info(f"   Lambda_bp: {lambda_bp:.6f} ± {lambda_error:.6f} mutations per copy")
-    
-    # 4. Q-score weighted analysis
-    logging.info("4. Calculating Q-score weighted mutation rates...")
+    # 3. Q-score weighted analysis
+    logging.info("3. Calculating Q-score weighted mutation rates...")
     hit_weighted_mis, hit_weighted_cov, hit_raw_mis, hit_raw_cov, hit_weights, hit_outcomes = calculate_qscore_weighted_mismatches(
         sam_hit, hit_seq, hit_qscore_stats
     )
@@ -1441,32 +1224,30 @@ def comprehensive_aa_mutation_analysis(hit_mis, hit_cov, bg_mis, bg_cov, cds_seq
     logging.info(f"   Background weighted rate: {bg_weighted_rate:.6f} ± {bg_weighted_error:.6f}")
     logging.info(f"   Net weighted rate: {net_weighted_rate:.6f} ± {net_weighted_error:.6f}")
     
-    # 5. Calculate AA mutations per gene (simplified - no Monte Carlo)
-    logging.info("5. Calculating AA mutations per gene from weighted rates...")
-    lambda_bp_weighted = net_weighted_rate * len(cds_seq)
-    lambda_error_weighted = net_weighted_error * len(cds_seq)
+    # 4. Calculate AA mutations per gene (simplified - no Monte Carlo)
+    logging.info("4. Calculating AA mutations per gene from weighted rates...")
+    weighted_bp_mutations = net_weighted_rate * len(cds_seq)
     
     # Simple AA mutation estimate (mean of Poisson distribution)
-    mean_aa = lambda_bp_weighted / 3.0  # Approximate: 3 bp per AA
-    std_aa = np.sqrt(lambda_bp_weighted) / 3.0  # Standard deviation of Poisson
+    mean_aa = weighted_bp_mutations / 3.0  # Approximate: 3 bp per AA
+    std_aa = np.sqrt(max(weighted_bp_mutations, 0.0)) / 3.0  # Standard deviation of Poisson
     
-    logging.info(f"   Lambda_bp (weighted): {lambda_bp_weighted:.6f} ± {lambda_error_weighted:.6f}")
     logging.info(f"   AA mutations per gene: {mean_aa:.4f} ± {std_aa:.4f}")
     
-    # 6. Bootstrap confidence intervals
-    logging.info("6. Calculating bootstrap confidence intervals (1,000 resamples)...")
+    # 5. Bootstrap confidence intervals
+    logging.info("5. Calculating bootstrap confidence intervals (1,000 resamples)...")
     bootstrap_mean, ci_lower, ci_upper, bootstrap_dist = bootstrap_aa_mutations(
         hit_mis, hit_cov, bg_mis, bg_cov, cds_seq
     )
     logging.info(f"   Bootstrap 95% CI: [{ci_lower:.4f}, {ci_upper:.4f}]")
     
-    # 7. Alignment error estimation
-    logging.info("7. Calculating alignment error estimation...")
+    # 6. Alignment error estimation
+    logging.info("6. Calculating alignment error estimation...")
     alignment_error = 1.0 / np.sqrt(hit_cov) if hit_cov > 0 else 1.0
     logging.info(f"   Alignment error: {alignment_error:.6f}")
     
-    # 8. Q-score uncertainty factors
-    logging.info("8. Calculating Q-score uncertainty factors...")
+    # 7. Q-score uncertainty factors
+    logging.info("7. Calculating Q-score uncertainty factors...")
     hit_qscore_uncertainty = qscore_uncertainty_factor(hit_qscore_stats['mean_qscore']) if hit_qscore_stats else 0.0
     bg_qscore_uncertainty = qscore_uncertainty_factor(bg_qscore_stats['mean_qscore']) if bg_qscore_stats else 0.0
     logging.info(f"   Hit Q-score uncertainty: {hit_qscore_uncertainty:.6f}")
@@ -1483,8 +1264,6 @@ def comprehensive_aa_mutation_analysis(hit_mis, hit_cov, bg_mis, bg_cov, cds_seq
         'bg_rate_ci': bg_rate_ci,
         'net_rate': net_rate,
         'net_rate_error': net_rate_error,
-        'lambda_bp': lambda_bp,
-        'lambda_error': lambda_error,
         'alignment_error': alignment_error,
         'hit_qscore_uncertainty': hit_qscore_uncertainty,
         'bg_qscore_uncertainty': bg_qscore_uncertainty,
@@ -1500,8 +1279,6 @@ def comprehensive_aa_mutation_analysis(hit_mis, hit_cov, bg_mis, bg_cov, cds_seq
         'bg_weighted_error': bg_weighted_error,
         'net_weighted_rate': net_weighted_rate,
         'net_weighted_error': net_weighted_error,
-        'lambda_bp_weighted': lambda_bp_weighted,
-        'lambda_error_weighted': lambda_error_weighted,
         'hit_weighted_mismatches': hit_weighted_mis,
         'hit_weighted_coverage': hit_weighted_cov,
         'bg_weighted_mismatches': bg_weighted_mis,
@@ -1576,13 +1353,12 @@ def create_output_directories(results_dir):
         'detailed_dir': detailed_dir,
     }
 
-def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mean, is_protein, hit_seq):
+def write_key_findings(results_dir, simple_lambda, simple_aa_mean, is_protein, hit_seq):
     """
     Generate lay-user executive summary KEY_FINDINGS.txt.
 
     Args:
         results_dir: Results directory path
-        consensus_info: Consensus AA mutation estimate from QC analysis
         simple_lambda: Simple lambda (bp mutations per copy) from main analysis
         simple_aa_mean: Simple AA mutation mean from Monte Carlo simulation
         is_protein: Whether the region is protein-coding
@@ -1595,25 +1371,11 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
         f.write("EP LIBRARY PROFILER - KEY FINDINGS\n")
         f.write("=" * 60 + "\n\n")
 
-        # Determine which value to use as the "headline" number
-        if consensus_info and consensus_info.get("consensus_mean") is not None:
-            headline_aa = consensus_info["consensus_mean"]
-            headline_std = consensus_info.get("consensus_std", 0.0)
-            method_note = "consensus (precision-weighted average across Q-score thresholds)"
-        elif simple_aa_mean is not None:
-            headline_aa = simple_aa_mean
-            headline_std = 0.0  # Simple method doesn't provide error
-            method_note = "Monte Carlo simulation (single Q-score)"
-        else:
-            headline_aa = None
-            headline_std = 0.0
-            method_note = "N/A"
-
         f.write("EXPECTED AMINO ACID MUTATIONS PER GENE COPY\n")
         f.write("-" * 45 + "\n")
-        if is_protein and headline_aa is not None:
-            f.write(f"  {headline_aa:.2f} +/- {headline_std:.2f} amino-acid mutations per gene copy\n")
-            f.write(f"  (Method: {method_note})\n\n")
+        if is_protein and simple_aa_mean is not None:
+            f.write(f"  {simple_aa_mean:.2f} amino-acid mutations per gene copy\n")
+            f.write("  (Method: Monte Carlo simulation)\n\n")
             f.write(
                 f"  Poisson lambda (net bp mutations per gene copy): {simple_lambda:.6f}\n\n"
             )
@@ -1621,11 +1383,11 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
             # Plain-language interpretation using Poisson distribution
             f.write("WHAT THIS MEANS (Poisson distribution):\n")
             f.write("-" * 45 + "\n")
-            if headline_aa > 0:
+            if simple_aa_mean > 0:
                 # P(k=0) = e^(-lambda)
-                p_wildtype = np.exp(-headline_aa) * 100
+                p_wildtype = np.exp(-simple_aa_mean) * 100
                 # P(k=1) = lambda * e^(-lambda)
-                p_one_mut = headline_aa * np.exp(-headline_aa) * 100
+                p_one_mut = simple_aa_mean * np.exp(-simple_aa_mean) * 100
                 # P(k>=2) = 1 - P(0) - P(1)
                 p_two_plus = 100 - p_wildtype - p_one_mut
 
@@ -1640,27 +1402,6 @@ def write_key_findings(results_dir, consensus_info, simple_lambda, simple_aa_mea
             else:
                 f.write("  AA mutation estimate could not be calculated.\n\n")
 
-        # Quality assessment
-        f.write("QUALITY ASSESSMENT\n")
-        f.write("-" * 45 + "\n")
-        if consensus_info:
-            n_thresholds = len(consensus_info.get("thresholds_used", []))
-            min_bases = consensus_info.get("min_mappable_bases", 0)
-            note = consensus_info.get("note", "")
-
-            if n_thresholds >= 3 and note != "FELL_BACK_TO_MAX_COVERAGE":
-                f.write("  GOOD - Multiple Q-score thresholds contributed to consensus\n")
-            elif n_thresholds >= 1:
-                f.write("  ACCEPTABLE - Limited Q-score thresholds available\n")
-            else:
-                f.write("  LOW COVERAGE - Results may be unreliable\n")
-
-            if note == "FELL_BACK_TO_MAX_COVERAGE":
-                f.write("  WARNING: Fell back to max-coverage threshold due to low coverage\n")
-        else:
-            f.write("  UNKNOWN - Consensus analysis not available\n")
-
-        f.write("\n")
         f.write("SUPPORTING DATA\n")
         f.write("-" * 45 + "\n")
         f.write("  See the detailed/ folder for per-gene CSVs and summary statistics.\n")
@@ -2236,6 +1977,7 @@ def run_ep_library_profile(
             "Z_stat",
             "P_value",
             "Est_Mut_per_Copy",
+            "Avg_AA_Mut_per_Copy",
             "Is_Protein",
         ]
     )
@@ -2264,6 +2006,8 @@ def run_ep_library_profile(
                     f"{analysis.get('z_stat', 0.0):.4f}",
                     str(analysis.get("p_val", "N/A")),
                     f"{analysis.get('est_mut_per_copy', 0.0):.6e}",
+                    (f"{analysis.get('avg_aa_mutations', 0.0):.6f}"
+                     if analysis.get("avg_aa_mutations") is not None else "N/A"),
                     "yes" if analysis.get("is_protein") else "no",
                 ]
                 masterf.write("\t".join(row) + "\n")
@@ -2350,31 +2094,6 @@ def process_single_fastq(
     ]
     logging.info("Chunk sizes: %s bp", [len(chunk) for chunk in chunks])
 
-    logging.info("Running QC analysis to get Q-score results...")
-    qc_results = None
-    consensus_info = None
-    try:
-        qc_results, consensus_info = run_qc_analysis(
-            str(fastq_path),
-            str(results_dir),
-            str(region_fasta),
-            str(plasmid_fasta),
-        )
-        if qc_results is not None:
-            logging.info("QC analysis completed successfully. Found %s Q-score results.", len(qc_results))
-            if consensus_info and consensus_info.get("consensus_mean") is not None:
-                logging.info(
-                    "Consensus AA mutations per gene: %.4f ± %.4f (thresholds used: %s)",
-                    consensus_info["consensus_mean"],
-                    consensus_info.get("consensus_std", 0.0),
-                    consensus_info.get("thresholds_used"),
-                )
-        else:
-            logging.warning("QC analysis completed but no Q-score results found.")
-    except Exception as exc:
-        logging.error("QC analysis failed: %s", exc)
-        logging.warning("Proceeding with unfiltered data only.")
-
     # Run main analysis on unfiltered data only
     logging.info("Running main analysis for unfiltered data...")
 
@@ -2405,14 +2124,7 @@ def process_single_fastq(
         is_protein = unfiltered_result.get('is_protein', False)
 
     # Write KEY_FINDINGS.txt (lay-user summary)
-    write_key_findings(
-        results_dir,
-        consensus_info,
-        simple_lambda,
-        simple_aa_mean,
-        is_protein,
-        hit_seq,
-    )
+    write_key_findings(results_dir, simple_lambda, simple_aa_mean, is_protein, hit_seq)
 
     logging.info("Generated summary files: KEY_FINDINGS.txt")
 
@@ -2426,5 +2138,4 @@ def process_single_fastq(
         "sample": sample_name,
         "results_dir": results_dir,
         "analysis_results": analysis_results,
-        "consensus_info": consensus_info,
     }

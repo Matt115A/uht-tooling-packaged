@@ -375,37 +375,21 @@ Each sample produces an organized output directory:
 sample_name/
 ├── KEY_FINDINGS.txt              # Lay-user executive summary
 ├── summary_panels.png/pdf        # Main visualization
-├── aa_mutation_consensus.txt     # Consensus estimate details
 ├── run.log                       # Analysis log
 └── detailed/                     # Technical outputs
-    ├── methodology_notes.txt     # Documents which lambda drives what
-    ├── lambda_comparison.csv     # Side-by-side lambda comparison
     ├── gene_mismatch_rates.csv
     ├── base_distribution.csv
     ├── aa_substitutions.csv
     ├── plasmid_coverage.csv
-    ├── aa_mutation_distribution.csv
-    ├── comprehensive_qc_data.csv
-    ├── simple_qc_data.csv
-    └── qc_plots/                 # QC visualizations
-        ├── qc_plot_*.png
-        ├── comprehensive_qc_analysis.png
-        ├── error_analysis.png
-        └── qc_mutation_rate_vs_quality.png/csv
+    └── aa_mutation_distribution.csv
 ```
 
-**Lambda estimates: which to use**
+**Lambda estimate**
 
-The profiler calculates lambda (mutations per gene copy) via two methods:
+The profiler reports a single lambda (mutations per gene copy) derived from the net mismatch rate:
 
-| Method | Formula | Error Quantified? | Used For |
-|--------|---------|-------------------|----------|
-| Simple | `(hit_rate - bg_rate) × seq_len` | No | KDE plot, Monte Carlo simulation |
-| Consensus | Precision-weighted average across Q-scores | Yes | Recommended for reporting |
-
-- **For publication/reporting**: Use the consensus value from `KEY_FINDINGS.txt` or `aa_mutation_consensus.txt`.
-- **For understanding distribution shape**: See the KDE plot in `summary_panels.png` (note: uses simple lambda).
-- **For detailed error analysis**: See `detailed/comprehensive_qc_data.csv`.
+- **Formula**: `(hit_rate - bg_rate) × seq_len`
+- **Where it appears**: panel 4 of `summary_panels.png` and the Poisson lambda line in `KEY_FINDINGS.txt`.
 
 The `KEY_FINDINGS.txt` file provides a plain-language summary including:
 - Expected AA mutations per gene copy
@@ -416,8 +400,7 @@ The `KEY_FINDINGS.txt` file provides a plain-language summary including:
 
 1. Reads are aligned to both the region of interest and the full plasmid. Mismatches in the region define the "target" rate; mismatches elsewhere provide the background.
 2. The per-base background rate is subtracted from the target rate to yield a net nucleotide mutation rate, and the standard deviation reflects binomial sampling and quality-score uncertainty.
-3. The net rate is multiplied by the CDS length to estimate λ_bp (mutations per copy). Monte Carlo simulations then flip random bases, translate the mutated CDS, and count amino-acid differences across 1,000 trials—these drive the AA mutation mean/variance that appear in the panel plot.
-4. If multiple Q-score thresholds are analysed, the CLI aggregates them via a precision-weighted consensus (1 / standard deviation weighting) after filtering out thresholds with insufficient coverage; the consensus value is written to `aa_mutation_consensus.txt` and plotted as a horizontal guide.
+3. The net rate is multiplied by the CDS length to estimate λ_bp (mutations per copy). Monte Carlo simulations then flip random bases, translate the mutated CDS, and count amino-acid differences across 1,000 trials—these drive the AA mutation mean/variance that appear in the panel plot and summary.
 
 ---
 

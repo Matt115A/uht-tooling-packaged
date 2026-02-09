@@ -1080,9 +1080,8 @@ def create_gui() -> "gr.Blocks":
                     textwrap.dedent(
                         """
                         - Reads are aligned against both the region-of-interest and the full plasmid to measure target and background mismatch rates; their difference yields the net nucleotide mutation rate with propagated binomial and quality-score uncertainty.
-                        - The net per-base rate is multiplied by the CDS length to obtain λ₍bp₎ (mutations per copy), then Monte Carlo simulations flip random bases, translate the mutated CDS, and count amino-acid differences—those simulated means and confidence intervals are the values plotted in the QC figure.
-                        - When multiple Q-score thresholds are analysed, the CLI combines them via a precision-weighted consensus (after discarding filters with <1000 mappable bases). The consensus AA mutation rate is written to `aa_mutation_consensus.txt` and drawn as a horizontal guide in the plot.
-                        - Download the archive to inspect per-sample plots, TSV summaries, the consensus summary, and logs for troubleshooting.
+                        - The net per-base rate is multiplied by the CDS length to obtain the per-copy bp mutation value used in panel 4, then Monte Carlo simulations flip random bases, translate the mutated CDS, and count amino-acid differences—those simulated means and confidence intervals are the values plotted in the QC figure.
+                        - Download the archive to inspect per-sample plots, TSV summaries, and logs for troubleshooting.
                         """
                     )
             )
