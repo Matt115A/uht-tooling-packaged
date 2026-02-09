@@ -11,6 +11,8 @@ import random
 import numpy as np
 from Bio import SeqIO
 from Bio.Seq import Seq
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import math
 import tempfile

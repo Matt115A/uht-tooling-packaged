@@ -12,14 +12,12 @@ import zipfile
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
+import pandas as pd
+
 try:
     import gradio as gr
-    import pandas as pd
-except ImportError as exc:  # pragma: no cover - handled at runtime
-    raise SystemExit(
-        "Missing dependency: "
-        f"{exc}. Install optional GUI extras via 'pip install gradio pandas'."
-    ) from exc
+except ImportError:  # pragma: no cover - gradio only needed for legacy GUI
+    gr = None  # type: ignore[assignment]
 
 from uht_tooling.tools import ToolNotFoundError, validate_workflow_tools
 from uht_tooling.workflows.design_gibson import run_design_gibson
@@ -615,7 +613,12 @@ def run_gui_ep_library_profile(
 # Gradio Interface
 # ---------------------------------------------------------------------------
 
-def create_gui() -> gr.Blocks:
+def create_gui() -> "gr.Blocks":
+    if gr is None:
+        raise RuntimeError(
+            "Gradio is not installed. Install the legacy GUI extra: "
+            "pip install 'uht-tooling[legacy-gui]'"
+        )
     custom_css = """
     .gradio-container {
         max-width: 1400px;

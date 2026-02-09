@@ -25,7 +25,7 @@ from uht_tooling.workflows.mut_rate import (
     expand_fastq_inputs as expand_fastq_inputs_ep,
     run_ep_library_profile,
 )
-from uht_tooling.workflows.gui import launch_gui
+from uht_tooling.web import launch_web_gui
 
 app = typer.Typer(help="Command-line interface for the uht-tooling package.")
 
@@ -580,15 +580,24 @@ def gui_command(
         "-p",
         help="Preferred port for the GUI (falls back automatically if unavailable).",
     ),
+    legacy: bool = typer.Option(
+        False,
+        "--legacy",
+        help="Use the legacy Gradio GUI instead of the new NiceGUI frontend.",
+    ),
     share: bool = typer.Option(
         False,
         "--share",
-        help="Enable Gradio's public sharing tunnel (requires network access).",
+        help="Enable Gradio's public sharing tunnel (legacy mode only).",
     ),
 ):
-    """Launch the Gradio GUI."""
+    """Launch the graphical interface (NiceGUI by default, --legacy for Gradio)."""
     try:
-        launch_gui(server_name=server_name, server_port=server_port, share=share)
+        if legacy:
+            from uht_tooling.workflows.gui import launch_gui
+            launch_gui(server_name=server_name, server_port=server_port, share=share)
+        else:
+            launch_web_gui(host=server_name, port=server_port)
     except KeyboardInterrupt:
         typer.echo("GUI stopped by user.")
     except Exception as exc:
