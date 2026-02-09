@@ -59,13 +59,30 @@ def _build_sidebar(current_path: str) -> None:
 
         # Dark-mode toggle
         dark = ui.dark_mode()
-        def toggle_theme():
-            dark.toggle()
-            js = (
-                "document.documentElement.setAttribute('data-theme', "
-                "document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark')"
+
+        def apply_saved_theme() -> None:
+            theme = app.storage.user.get("theme", "light")
+            if theme == "dark":
+                dark.enable()
+            else:
+                dark.disable()
+            ui.run_javascript(
+                f"document.documentElement.setAttribute('data-theme', '{theme}')"
             )
-            ui.run_javascript(js)
+
+        apply_saved_theme()
+
+        def toggle_theme():
+            current = app.storage.user.get("theme", "light")
+            new_theme = "dark" if current != "dark" else "light"
+            app.storage.user["theme"] = new_theme
+            if new_theme == "dark":
+                dark.enable()
+            else:
+                dark.disable()
+            ui.run_javascript(
+                f"document.documentElement.setAttribute('data-theme', '{new_theme}')"
+            )
 
         with ui.element("div").classes("theme-toggle").on("click", toggle_theme):
             ui.icon("dark_mode").style("font-size: 18px;")

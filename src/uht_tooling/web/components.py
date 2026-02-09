@@ -85,12 +85,31 @@ def apple_slider(
     max_val: float,
     value: float,
     step: float = 0.01,
+    *,
+    unit: str = "",
+    display_multiplier: float = 1.0,
+    precision: Optional[int] = None,
 ) -> ui.slider:
-    ui.label(label).classes("text-xs font-semibold").style(
-        "color: var(--text-secondary); margin-bottom: 2px;"
-    )
+    with ui.row().classes("w-full items-end justify-between"):
+        ui.label(label).classes("text-xs font-semibold").style(
+            "color: var(--text-secondary); margin-bottom: 2px;"
+        )
+        value_label = ui.label().classes("apple-slider-value")
     s = ui.slider(min=min_val, max=max_val, value=value, step=step)
     s.classes("apple-slider w-full")
+
+    def _format_value(val: float) -> str:
+        display_val = val * display_multiplier
+        if precision is None:
+            inferred = 0 if float(display_val).is_integer() else 2
+        else:
+            inferred = precision
+        text = f"{display_val:.{inferred}f}"
+        if unit:
+            text = f"{text} {unit}"
+        return text
+
+    value_label.bind_text_from(s, "value", lambda v: _format_value(v))
     return s
 
 

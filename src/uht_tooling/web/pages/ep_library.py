@@ -14,6 +14,7 @@ from uht_tooling.web.components import (
     apple_card,
     apple_markdown,
     apple_progress,
+    apple_textarea,
     apple_upload,
 )
 from uht_tooling.workflows.gui import run_gui_ep_library_profile
@@ -74,6 +75,41 @@ async def render() -> None:
                     on_upload=_save_plasmid,
                 )
 
+        with ui.row().classes("w-full gap-4"):
+            with ui.column().classes("flex-1"):
+                region_text = apple_textarea(
+                    "Region-of-interest FASTA (paste)",
+                    "Paste FASTA or raw DNA sequence here",
+                    rows=4,
+                )
+            with ui.column().classes("flex-1"):
+                plasmid_text = apple_textarea(
+                    "Plasmid FASTA (paste)",
+                    "Paste FASTA or raw DNA sequence here",
+                    rows=4,
+                )
+
+        def _normalize_fasta(text: str, header: str) -> str:
+            cleaned = text.strip()
+            if not cleaned:
+                return ""
+            if cleaned.lstrip().startswith(">"):
+                return cleaned.rstrip() + "\n"
+            seq = "".join(cleaned.split())
+            lines = [seq[i : i + 80] for i in range(0, len(seq), 80)]
+            return f">{header}\n" + "\n".join(lines) + "\n"
+
+        def _write_fasta_from_text(
+            text: str, header: str, filename: str
+        ) -> Optional[str]:
+            fasta = _normalize_fasta(text, header)
+            if not fasta:
+                return None
+            tmp = Path(tempfile.mkdtemp(prefix="uht_gui_ep_"))
+            dest = tmp / filename
+            dest.write_text(fasta)
+            return str(dest)
+
         progress = apple_progress()
         result_md = apple_markdown()
         download_row = ui.element("div")
@@ -84,11 +120,24 @@ async def render() -> None:
             result_md.set_content("")
             download_row.set_visibility(False)
 
+            region_value = region_path["value"]
+            plasmid_value = plasmid_path["value"]
+            pasted_region = _write_fasta_from_text(
+                region_text.value or "", "pasted_region", "pasted_region.fasta"
+            )
+            pasted_plasmid = _write_fasta_from_text(
+                plasmid_text.value or "", "pasted_plasmid", "pasted_plasmid.fasta"
+            )
+            if pasted_region:
+                region_value = pasted_region
+            if pasted_plasmid:
+                plasmid_value = pasted_plasmid
+
             summary, zip_path = await run_in_threadpool(
                 run_gui_ep_library_profile,
                 fastq_paths,
-                region_path["value"],
-                plasmid_path["value"],
+                region_value,
+                plasmid_value,
             )
 
             progress.set_visibility(False)

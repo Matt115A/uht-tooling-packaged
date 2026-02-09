@@ -17,6 +17,7 @@ from uht_tooling.web.components import (
     apple_number,
     apple_progress,
     apple_slider,
+    apple_textarea,
     apple_upload,
 )
 from uht_tooling.workflows.gui import run_gui_umi_hunter
@@ -61,6 +62,31 @@ async def render() -> None:
                     on_upload=_save_template,
                 )
 
+        template_text = apple_textarea(
+            "Template FASTA (paste)",
+            "Paste FASTA or raw DNA sequence here",
+            rows=4,
+        )
+
+        def _normalize_fasta(text: str, header: str) -> str:
+            cleaned = text.strip()
+            if not cleaned:
+                return ""
+            if cleaned.lstrip().startswith(">"):
+                return cleaned.rstrip() + "\n"
+            seq = "".join(cleaned.split())
+            lines = [seq[i : i + 80] for i in range(0, len(seq), 80)]
+            return f">{header}\n" + "\n".join(lines) + "\n"
+
+        def _write_fasta_from_text(text: str, header: str) -> Optional[str]:
+            fasta = _normalize_fasta(text, header)
+            if not fasta:
+                return None
+            tmp = Path(tempfile.mkdtemp(prefix="uht_gui_umi_"))
+            dest = tmp / "pasted_template.fasta"
+            dest.write_text(fasta)
+            return str(dest)
+
         # UMI flanks
         with ui.row().classes("w-full gap-4"):
             with ui.column().classes("flex-1"):
@@ -101,6 +127,9 @@ async def render() -> None:
                     max_val=1.0,
                     value=0.9,
                     step=0.05,
+                    unit="%",
+                    display_multiplier=100.0,
+                    precision=0,
                 )
             with ui.column().classes("flex-1"):
                 consensus_thresh = apple_slider(
@@ -109,6 +138,9 @@ async def render() -> None:
                     max_val=1.0,
                     value=0.7,
                     step=0.05,
+                    unit="%",
+                    display_multiplier=100.0,
+                    precision=0,
                 )
 
         min_cluster = apple_slider(
@@ -117,6 +149,8 @@ async def render() -> None:
             max_val=50,
             value=3,
             step=1,
+            unit="reads",
+            precision=0,
         )
 
         progress = apple_progress()
@@ -129,10 +163,17 @@ async def render() -> None:
             result_md.set_content("")
             download_row.set_visibility(False)
 
+            template_value = template_path["value"]
+            pasted_template = _write_fasta_from_text(
+                template_text.value or "", "pasted_template"
+            )
+            if pasted_template:
+                template_value = pasted_template
+
             summary, zip_path = await run_in_threadpool(
                 run_gui_umi_hunter,
                 fastq_path["value"],
-                template_path["value"],
+                template_value,
                 umi_start.value,
                 umi_end.value,
                 umi_min.value,

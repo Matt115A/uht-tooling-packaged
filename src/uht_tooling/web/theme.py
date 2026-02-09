@@ -275,6 +275,13 @@ body, .nicegui-content {
 }
 
 /* ── Slider ────────────────────────────────────────────────────── */
+.apple-slider-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
 .apple-slider .q-slider__track-container {
     height: 4px !important;
 }

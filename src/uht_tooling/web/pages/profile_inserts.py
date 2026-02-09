@@ -88,6 +88,8 @@ async def render() -> None:
             max_val=100,
             value=80,
             step=1,
+            unit="%",
+            precision=0,
         )
 
         progress = apple_progress()

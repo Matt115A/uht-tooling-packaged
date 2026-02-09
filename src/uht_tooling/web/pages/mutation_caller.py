@@ -17,6 +17,7 @@ from uht_tooling.web.components import (
     apple_markdown,
     apple_number,
     apple_progress,
+    apple_textarea,
     apple_upload,
 )
 from uht_tooling.workflows.gui import run_gui_mutation_caller
@@ -60,6 +61,31 @@ async def render() -> None:
                     on_upload=_save_template,
                 )
 
+        template_text = apple_textarea(
+            "Template FASTA (paste)",
+            "Paste FASTA or raw DNA sequence here",
+            rows=4,
+        )
+
+        def _normalize_fasta(text: str, header: str) -> str:
+            cleaned = text.strip()
+            if not cleaned:
+                return ""
+            if cleaned.lstrip().startswith(">"):
+                return cleaned.rstrip() + "\n"
+            seq = "".join(cleaned.split())
+            lines = [seq[i : i + 80] for i in range(0, len(seq), 80)]
+            return f">{header}\n" + "\n".join(lines) + "\n"
+
+        def _write_fasta_from_text(text: str, header: str) -> Optional[str]:
+            fasta = _normalize_fasta(text, header)
+            if not fasta:
+                return None
+            tmp = Path(tempfile.mkdtemp(prefix="uht_gui_mc_"))
+            dest = tmp / "pasted_template.fasta"
+            dest.write_text(fasta)
+            return str(dest)
+
         with ui.row().classes("w-full gap-4"):
             with ui.column().classes("flex-1"):
                 upstream = apple_input(
@@ -86,10 +112,17 @@ async def render() -> None:
             result_md.set_content("")
             download_row.set_visibility(False)
 
+            template_value = template_path["value"]
+            pasted_template = _write_fasta_from_text(
+                template_text.value or "", "pasted_template"
+            )
+            if pasted_template:
+                template_value = pasted_template
+
             summary, zip_path = await run_in_threadpool(
                 run_gui_mutation_caller,
                 fastq_path["value"],
-                template_path["value"],
+                template_value,
                 upstream.value,
                 downstream.value,
                 min_len.value,

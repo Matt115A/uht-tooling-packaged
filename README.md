@@ -6,6 +6,8 @@ Automation helpers for ultra-high-throughput molecular biology workflows. The pa
 
 ## Installation
 
+**Python version:** 3.10
+
 ### Quick install (recommended, easiest file maintainance)
 ```bash
 pip install "uht-tooling[gui]"
