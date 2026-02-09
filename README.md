@@ -14,11 +14,13 @@ pip install "uht-tooling[gui]"
 
 ```
 
-This installs the core workflows plus the optional GUI dependency (Gradio). Omit the `[gui]` extras if you only need the CLI:
+This installs the core workflows plus the optional GUI dependency (NiceGUI). NiceGUI is already included in the core dependencies, so `[gui]` is a convenience alias. Omit the `[gui]` extras if you only need the CLI:
 
 ```bash
 pip install uht-tooling
 ```
+
+> **Legacy Gradio interface:** The old Gradio GUI is still available via `pip install "uht-tooling[legacy-gui]"` and launched with `uht-tooling gui --legacy`.
 
 ### External Tools
 
@@ -150,6 +152,13 @@ CLI options always take precedence over config values.
 
 ### Nextera XT primer design
 
+**Inputs:**
+- `--binding-csv` — CSV with a `binding_region` column (row 1 = i7 forward region, row 2 = i5 reverse region, both 5'→3')
+- `--output-csv` — path for the output primer CSV
+
+**Outputs:**
+- Single CSV with columns `[primer_name, sequence]`
+
 1. Prepare `data/nextera_designer/nextera_designer.csv` with a `binding_region` column. Row 1 should contain the forward region, row 2 the reverse region, both in 5'→3' orientation.
 2. Optional: supply a YAML overrides file for index lists/prefixes via `--config`.
 3. Run:
@@ -182,7 +191,8 @@ The helper is preloaded with twelve i5 and twelve i7 indices, enabling up to 144
     --mutations-csv data/design_slim/slim_target_mutations.csv \
     --output-dir results/design_slim/
   ```
-- Output: `results/design_slim/SLIM_primers.csv` plus logs.
+**Outputs:**
+- `SLIM_primers.csv` — columns `[Primer Name, Sequence]`, 4 primers per mutation (`_Lf`, `_Sr`, `_Lr`, `_Sf`)
 
 Mutation nomenclature examples:
 - `A123G` (substitution)
@@ -253,7 +263,8 @@ KLD (Kinase-Ligation-DpnI) is an alternative mutagenesis method using inverse PC
     --mutations-csv data/design_kld/kld_target_mutations.csv \
     --output-dir results/design_kld/
   ```
-- Output: `results/design_kld/KLD_primers.csv` plus logs.
+**Outputs:**
+- `KLD_primers.csv` — columns `[Primer Name, Sequence, Tm (binding), GC%, Length, Notes]`, 2 primers per mutation (`_F`, `_R`)
 
 Mutation nomenclature: Same as SLIM (substitution, deletion, insertion, indel, library).
 
@@ -295,7 +306,9 @@ NEB sells a KLD Enzyme Mix (M0554) that combines these steps.
     --mutations-csv data/design_gibson/gibson_target_mutations.csv \
     --output-dir results/design_gibson/
   ```
-- Outputs include primer sets and an assembly-plan CSV.
+**Outputs:**
+- `Gibson_primers.csv` — columns `[Group, Submutation, Primer Name, Sequence]`
+- `Gibson_assembly_plan.csv` — columns `[Group, Submutation, PCR_Primer_Forward, PCR_Primer_Reverse, Tm (celsius), Amplicon Size (bp)]`
 
 If mutations fall within overlapping primer windows, design sequential reactions. 
 
@@ -314,7 +327,14 @@ If mutations fall within overlapping primer windows, design sequential reactions
      --output-dir results/mutation_caller/ \
      --threshold 10
    ```
-3. Outputs: per-sample subdirectories with substitution summaries, co-occurrence matrices, and logs. Co-occurence matrices are experimental and are not yet to be relied on.
+**Outputs:** per-sample subdirectory containing:
+- `{sample}_aa_substitution_frequency.png` — substitution frequency plot with KDE
+- `{sample}_frequent_aa_counts.csv` — columns `[AA, Count]` (filtered by `--threshold`)
+- `{sample}_cooccurring_AA_baseline.csv` — columns `[AA1, AA2, Both_Count, AA1_Count, AA2_Count]`
+- `{sample}_cooccurring_AA_fisher.csv` — columns `[AA1, AA2, p-value]`
+- `{sample}_report.txt` — summary report
+
+Co-occurrence matrices are experimental and are not yet to be relied on.
 
 ### UMI Hunter
 
@@ -332,6 +352,11 @@ If mutations fall within overlapping primer windows, design sequential reactions
 - `--consensus-mutation-threshold` (0–1) is the fraction of reads within a cluster that must agree on a base before it is written into the consensus sequence.
 - `--min-cluster-size` sets the minimum number of reads required in a cluster before a consensus is generated (smaller clusters remain listed in the raw UMI CSV but no consensus FASTA is produced).
 
+**Outputs:** per-sample subdirectory containing:
+- `{sample}_UMI_clusters.csv` — columns `[Cluster Representative, Total Count, Members]`
+- `{sample}_gene_consensus.csv` — columns `[Cluster Representative, Total Count, Consensus Gene, Length Difference, Members]`
+- `{sample}_consensuses.fasta` — FASTA with consensus sequences (only for clusters ≥ `--min-cluster-size`)
+
 Please be aware, this toolkit will not scale well beyond around 50k reads/sample. See UMIC-seq pipelines for efficient UMI-gene dictionary generation.
 
 ### Profile inserts
@@ -344,7 +369,12 @@ Please be aware, this toolkit will not scale well beyond around 50k reads/sample
     --fastq data/profile_inserts/*.fastq.gz \
     --output-dir results/profile_inserts/
   ```
-- Outputs: extracted insert FASTA files, QC plots, metrics, and logs. Adjust fuzzy matching strictness via `--min-ratio`.
+**Outputs:**
+- `extracted_inserts.fasta` — all extracted insert sequences
+- `qc_report.txt` — summary statistics (lengths, GC, duplicates, probe performance)
+- `qc_plots.png` — multi-panel QC figure
+
+Adjust fuzzy matching strictness via `--min-ratio`.
 
 ### EP library profiler (no UMIs)
 
@@ -375,16 +405,21 @@ Each sample produces an organized output directory:
 
 ```
 sample_name/
-├── KEY_FINDINGS.txt              # Lay-user executive summary
-├── summary_panels.png/pdf        # Main visualization
-├── run.log                       # Analysis log
-└── detailed/                     # Technical outputs
+├── KEY_FINDINGS.txt                    # Lay-user executive summary
+├── summary_panels.png                  # Main visualization (PNG)
+├── summary_panels.pdf                  # Main visualization (PDF)
+├── run.log                             # Analysis log
+└── detailed/                           # Technical outputs
     ├── gene_mismatch_rates.csv
     ├── base_distribution.csv
-    ├── aa_substitutions.csv
+    ├── aa_substitutions.csv            # Protein-coding regions only
     ├── plasmid_coverage.csv
-    └── aa_mutation_distribution.csv
+    ├── aa_mutation_distribution.csv
+    ├── summary.txt
+    └── {sample}_mutation_spectrum.pdf
 ```
+
+A top-level `master_summary.txt` aggregates findings across all samples when multiple FASTQs are processed.
 
 **Lambda estimate**
 
@@ -408,38 +443,55 @@ The `KEY_FINDINGS.txt` file provides a plain-language summary including:
 
 ## GUI quick start (optional)
 
-The Gradio GUI wraps the same workflows with upload widgets and result previews. Launch it directly:
+The NiceGUI web frontend wraps the same workflows with an Apple-inspired design and sidebar navigation. Launch it with:
 
 ```bash
-python -m uht_tooling.workflows.gui
+uht-tooling gui
 ```
 
-Key points:
-- The server binds to `http://127.0.0.1:7860` by default and falls back to an available port if 7860 is busy. Copy http://127.0.0.1:7860 into your browser to interface with the GUI.
-- Temporary working directories are created under the system temp folder and cleaned automatically.
-- Output archives (ZIP files) mirror the directory structure produced by the CLI.
+The server binds to `http://127.0.0.1:7860` by default. Open that URL in your browser to access the interface.
 
-### Tabs and capabilities
+### Navigation
 
-1. **Nextera XT** – forward/reverse primer inputs with CSV preview.
-2. **SLIM** – template/context FASTA text areas plus mutation list (supports library codons like `R57:NNK`).
-3. **KLD** – inverse-PCR primer design using the same mutation list format (including library codons like `R57:NNK`).
-4. **Gibson** – multi-mutation support using `+` syntax.
-5. **Mutation Caller** – upload FASTQ and template FASTA, then enter flanks and gene length bounds inline.
-6. **UMI Hunter** – long-read UMI clustering with flank entry, UMI length bounds, mutation threshold, and minimum cluster size.
-7. **Profile Inserts** – interactive probe table plus multiple FASTQ uploads with adjustable fuzzy-match ratio.
-8. **EP Library Profile** – FASTQ uploads plus plasmid and region FASTA inputs.
+The sidebar organises workflows into two groups:
+
+**Primer Design**
+- Nextera XT (`/`)
+- SLIM (`/slim`)
+- KLD (`/kld`)
+- Gibson (`/gibson`)
+
+**Sequencing Analysis**
+- Mutation Caller (`/mutation-caller`)
+- UMI Hunter (`/umi-hunter`)
+- Profile Inserts (`/profile-inserts`)
+- EP Library (`/ep-library`)
+
+### Features
+
+- **Dark mode toggle** — persists across sessions via browser storage.
+- **FASTA paste support** — Mutation Caller, UMI Hunter, and EP Library pages accept raw sequence paste in addition to file upload.
+- **Slider controls with live value display** — UMI Hunter thresholds, Profile Inserts min-ratio.
+- **Download results as ZIP** — output archives mirror the directory structure produced by the CLI.
+
+### Legacy Gradio interface
+
+The old Gradio GUI is still available:
+
+```bash
+pip install "uht-tooling[legacy-gui]"
+uht-tooling gui --legacy
+```
 
 ### Workflow tips
 
 - For large FASTQ datasets, the CLI remains the most efficient option (especially for automation or batch processing).
-- Use the command-line flag `--share` in `python -m uht_tooling.workflows.gui` if you need to expose the GUI outside localhost.
 
 ### Troubleshooting
 
 - **Port already bound:** the launcher automatically selects the next free port and logs the chosen URL.
-- **Missing dependency:** ensure you installed with `pip install "uht-tooling[gui]"`.
-- **Stopping the server:** press `Ctrl+C` in the terminal session running the GUI.
+- **Missing dependency:** ensure you installed with `pip install "uht-tooling[gui]"` (or the core package, which already includes NiceGUI).
+- **Stopping the server:** press `Ctrl+C` in the terminal session running `uht-tooling gui`.
 
 ---
 
@@ -451,7 +503,6 @@ Every workflow configures logging to the destination output directory. Inspect `
 
 ## Roadmap
 
-- Replace deprecated Biopython command-line wrappers with native subprocess implementations.
 - Expand CLI coverage to any remaining legacy scripts that are still invoked via `make`.
 - Add documentation for automation pipelines and integrate continuous integration tests.
 

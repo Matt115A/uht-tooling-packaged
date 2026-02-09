@@ -7,7 +7,7 @@ name = "uht-tooling"
 version = "0.5.4"
 description = "Tooling for ultra-high throughput screening workflows."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = "==3.10.*"
 license = "MIT"
 authors = [{ name = "Matt115A" }]
 dependencies = [
