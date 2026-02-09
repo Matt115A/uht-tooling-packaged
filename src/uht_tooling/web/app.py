@@ -60,8 +60,20 @@ def _build_sidebar(current_path: str) -> None:
         # Dark-mode toggle
         dark = ui.dark_mode()
 
+        def _get_saved_theme() -> str:
+            try:
+                return app.storage.user.get("theme", "light")
+            except RuntimeError:
+                return "light"
+
+        def _set_saved_theme(theme: str) -> None:
+            try:
+                app.storage.user["theme"] = theme
+            except RuntimeError:
+                return
+
         def apply_saved_theme() -> None:
-            theme = app.storage.user.get("theme", "light")
+            theme = _get_saved_theme()
             if theme == "dark":
                 dark.enable()
             else:
@@ -73,9 +85,9 @@ def _build_sidebar(current_path: str) -> None:
         apply_saved_theme()
 
         def toggle_theme():
-            current = app.storage.user.get("theme", "light")
+            current = _get_saved_theme()
             new_theme = "dark" if current != "dark" else "light"
-            app.storage.user["theme"] = new_theme
+            _set_saved_theme(new_theme)
             if new_theme == "dark":
                 dark.enable()
             else:

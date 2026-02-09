@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
+import secrets
 import socket
 from typing import Optional
 
@@ -39,15 +41,24 @@ def _find_port(host: str, preferred: Optional[int]) -> int:
 def launch_web_gui(
     host: str = "127.0.0.1",
     port: Optional[int] = 7860,
+    storage_secret: Optional[str] = None,
 ) -> None:
     """Start the NiceGUI-based Apple-style GUI."""
     resolved_port = _find_port(host, port)
     _LOGGER.info("Starting uht-tooling web GUI on http://%s:%s", host, resolved_port)
     register_routes()
+    resolved_secret = storage_secret or os.getenv("UHT_STORAGE_SECRET")
+    if not resolved_secret:
+        resolved_secret = secrets.token_urlsafe(32)
+        _LOGGER.warning(
+            "Generated an ephemeral storage secret. Set UHT_STORAGE_SECRET or pass "
+            "storage_secret=... to persist user storage across restarts."
+        )
     ui.run(
         host=host,
         port=resolved_port,
         title="uht-tooling",
         reload=False,
         show=True,
+        storage_secret=resolved_secret,
     )

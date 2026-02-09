@@ -8,4 +8,5 @@ results/
 data/
 .env
 .venv
+.nicegui/
 .DS_Store
