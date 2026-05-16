@@ -23,9 +23,9 @@ from uht_tooling.workflows.gui import run_gui_ep_library_profile
 async def render() -> None:
     with apple_card(
         "EP Library Profile",
-        "Estimate background and target mutation rates for enzyme evolution "
-        "libraries without UMI barcodes. Upload one or more FASTQ files; "
-        "each is profiled individually.",
+        "Quantify cloning accuracy and mutation rates in a gene of interest, "
+        "identify commonly mutated sites in a plasmid pool and their relative "
+        "abundances, and compare variant enrichments between DNA pools.",
     ):
         # File state
         fastq_paths: List[str] = []
@@ -54,6 +54,9 @@ async def render() -> None:
             multiple=True,
             on_upload=_save_fastq,
         )
+        ui.label(
+            "Raw outputs of a nanopore sequencing run, for example from a whole-plasmid sequencing run."
+        ).classes("apple-card-subtitle w-full")
 
         async def _save_region(e):
             await _save_single(e, region_path)
@@ -68,12 +71,18 @@ async def render() -> None:
                     extensions=[".fasta", ".fa"],
                     on_upload=_save_region,
                 )
+                ui.label(
+                    "FASTA of the gene of interest, from start codon to stop codon."
+                ).classes("apple-card-subtitle w-full")
             with ui.column().classes("flex-1"):
                 apple_upload(
                     "Plasmid FASTA (.fasta/.fa)",
                     extensions=[".fasta", ".fa"],
                     on_upload=_save_plasmid,
                 )
+                ui.label(
+                    "FASTA of the plasmid containing, and including, the gene of interest. The gene of interest must be contiguous and in the forward direction in the plasmid FASTA; it should not be split across the start and end of the entry."
+                ).classes("apple-card-subtitle w-full")
 
         with ui.row().classes("w-full gap-4"):
             with ui.column().classes("flex-1"):
