@@ -1615,7 +1615,9 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
         if read.is_unmapped or read.query_sequence is None:
             continue
         for read_pos, ref_pos in read.get_aligned_pairs(matches_only=False):
-            if ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
+            # Count only positions backed by an actual read base.
+            # Deletions expose reference coordinates without contributing coverage.
+            if read_pos is not None and ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
                 plasmid_cov[ref_pos] += 1
     samfile_full.close()
 
@@ -1794,12 +1796,11 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
         if read.is_unmapped or read.query_sequence is None:
             continue
         for read_pos, ref_pos in read.get_aligned_pairs(matches_only=False):
-            if ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
-                if read_pos is not None:
-                    read_base = read.query_sequence[read_pos].upper()
-                    ref_base = plasmid_seq[ref_pos].upper()
-                    if read_base != ref_base and read_base in "ACGT" and ref_base in "ACGT":
-                        plasmid_mismatches[ref_pos] += 1
+            if read_pos is not None and ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
+                read_base = read.query_sequence[read_pos].upper()
+                ref_base = plasmid_seq[ref_pos].upper()
+                if read_base != ref_base and read_base in "ACGT" and ref_base in "ACGT":
+                    plasmid_mismatches[ref_pos] += 1
     samfile_rolling.close()
     
     # Calculate rolling mutation rate
