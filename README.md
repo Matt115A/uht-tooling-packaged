@@ -382,6 +382,10 @@ Adjust fuzzy matching strictness via `--min-ratio`.
   - `data/ep-library-profile/region_of_interest.fasta`
   - `data/ep-library-profile/plasmid.fasta`
   - FASTQ inputs (`--fastq` accepts multiple files)
+- ROI matching:
+  - The region-of-interest sequence can be forward, reverse-complemented, or split across the plasmid origin.
+  - The plasmid FASTA is treated as circular for ROI matching and background exclusion.
+  - The ROI still needs to be unique within the plasmid; ambiguous multi-hit matches are rejected.
 - Run:
   ```bash
   uht-tooling ep-library-profile \
@@ -435,7 +439,7 @@ The `KEY_FINDINGS.txt` file provides a plain-language summary including:
 
 **How the mutation rate and AA expectations are derived**
 
-1. Reads are aligned to both the region of interest and the full plasmid. Mismatches in the region define the "target" rate; mismatches elsewhere provide the background.
+1. Reads are aligned to both the region of interest and the full plasmid. The profiler first locates the ROI on the circular plasmid, allowing forward, reverse-complement, and origin-spanning matches. Mismatches in the ROI define the "target" rate; mismatches elsewhere provide the background.
 2. The per-base background rate is subtracted from the target rate to yield a net nucleotide mutation rate, and the standard deviation reflects binomial sampling and quality-score uncertainty.
 3. The net rate is multiplied by the CDS length to estimate λ_bp (mutations per copy). Monte Carlo simulations then flip random bases, translate the mutated CDS, and count amino-acid differences across 1,000 trials—these drive the AA mutation mean/variance that appear in the panel plot and summary.
 

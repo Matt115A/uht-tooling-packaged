@@ -1051,6 +1051,7 @@ def create_gui() -> "gr.Blocks":
                     - One or more FASTQ files (*.fastq/.gz) from the ep-library experiment.
                     - Region-of-interest FASTA delineating the mutational window.
                     - Plasmid FASTA providing the full reference context.
+                    - The ROI may be forward, reverse-complemented, or split across the plasmid origin; the plasmid is treated as circular for ROI placement.
 
                     **Outputs**
                     - Per-sample directories with coverage tables, mutation rate statistics, and QC plots.
@@ -1079,7 +1080,8 @@ def create_gui() -> "gr.Blocks":
                 gr.Markdown(
                     textwrap.dedent(
                         """
-                        - Reads are aligned against both the region-of-interest and the full plasmid to measure target and background mismatch rates; their difference yields the net nucleotide mutation rate with propagated binomial and quality-score uncertainty.
+                        - The profiler first locates the ROI on the circular plasmid, allowing forward, reverse-complement, and origin-spanning matches, then aligns reads against both the ROI and the full plasmid to measure target and background mismatch rates.
+                        - The difference between target and background mismatch rates yields the net nucleotide mutation rate with propagated binomial and quality-score uncertainty.
                         - The net per-base rate is multiplied by the CDS length to obtain the per-copy bp mutation value used in panel 4, then Monte Carlo simulations flip random bases, translate the mutated CDS, and count amino-acid differences—those simulated means and confidence intervals are the values plotted in the QC figure.
                         - Download the archive to inspect per-sample plots, TSV summaries, and logs for troubleshooting.
                         """

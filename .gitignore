@@ -10,3 +10,4 @@ data/
 .venv
 .nicegui/
 .DS_Store
+tests/test_mut_rate.py

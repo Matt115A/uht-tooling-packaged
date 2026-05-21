@@ -81,7 +81,7 @@ async def render() -> None:
                     on_upload=_save_plasmid,
                 )
                 ui.label(
-                    "FASTA of the plasmid containing, and including, the gene of interest. The gene of interest must be contiguous and in the forward direction in the plasmid FASTA; it should not be split across the start and end of the entry."
+                    "FASTA of the plasmid containing the gene of interest. The plasmid is treated as circular, so the gene may be forward, reverse-complemented, or split across the start and end of the entry, but it must still match uniquely."
                 ).classes("apple-card-subtitle w-full")
 
         with ui.row().classes("w-full gap-4"):

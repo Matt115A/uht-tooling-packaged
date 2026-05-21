@@ -183,6 +183,122 @@ def load_single_sequence(fasta_path):
     logging.info(f"Loaded sequence {seq_id} from {fasta_path}")
     return seq_str, seq_id
 
+
+def reverse_complement(sequence: str) -> str:
+    return str(Seq(sequence).reverse_complement())
+
+
+def _find_circular_matches(plasmid_seq: str, query_seq: str) -> List[int]:
+    plasmid_upper = plasmid_seq.upper()
+    query_upper = query_seq.upper()
+    plasmid_len = len(plasmid_upper)
+    query_len = len(query_upper)
+
+    if query_len == 0:
+        raise ValueError("Gene of interest sequence is empty.")
+    if query_len > plasmid_len:
+        return []
+
+    doubled = plasmid_upper + plasmid_upper
+    search_space = doubled[: plasmid_len + query_len - 1]
+    matches: List[int] = []
+    start = search_space.find(query_upper)
+    while start != -1:
+        if start < plasmid_len:
+            matches.append(start)
+        start = search_space.find(query_upper, start + 1)
+    return matches
+
+
+def locate_gene_of_interest(plasmid_seq: str, hit_seq: str) -> Dict[str, object]:
+    plasmid_len = len(plasmid_seq)
+    hit_len = len(hit_seq)
+    rc_hit_seq = reverse_complement(hit_seq)
+
+    candidates = []
+    for orientation, query_seq in [("forward", hit_seq), ("reverse_complement", rc_hit_seq)]:
+        for start in _find_circular_matches(plasmid_seq, query_seq):
+            candidates.append(
+                {
+                    "start": start,
+                    "length": hit_len,
+                    "orientation": orientation,
+                    "query_seq": query_seq,
+                }
+            )
+
+    unique_regions = {(c["start"], c["length"]) for c in candidates}
+    if not unique_regions:
+        raise ValueError(
+            "Gene region not found in plasmid. The profiler now supports circular, wrapped, "
+            "and reverse-complement matches, so this likely means the supplied ROI sequence "
+            "does not correspond to the supplied plasmid."
+        )
+    if len(unique_regions) > 1:
+        region_descriptions = ", ".join(
+            f"start={start + 1}, length={length}" for start, length in sorted(unique_regions)
+        )
+        raise ValueError(
+            "Gene region matched multiple distinct locations in the plasmid; please curate the "
+            f"ROI sequence so it is unique. Matches: {region_descriptions}"
+        )
+
+    start, length = next(iter(unique_regions))
+    matching_orientations = sorted(
+        {c["orientation"] for c in candidates if c["start"] == start and c["length"] == length}
+    )
+    if matching_orientations == ["forward", "reverse_complement"]:
+        orientation = "forward_and_reverse_complement"
+    else:
+        orientation = matching_orientations[0]
+
+    end = (start + length) % plasmid_len
+    wraps = start + length > plasmid_len
+    return {
+        "start": start,
+        "length": length,
+        "end": end,
+        "wraps": wraps,
+        "orientation": orientation,
+    }
+
+
+def circular_interval_segments(start: int, length: int, total_length: int) -> List[Tuple[int, int]]:
+    end = start + length
+    if end <= total_length:
+        return [(start, end)]
+    return [(start, total_length), (0, end % total_length)]
+
+
+def position_in_circular_interval(position: int, start: int, length: int, total_length: int) -> bool:
+    return any(seg_start <= position < seg_end for seg_start, seg_end in circular_interval_segments(start, length, total_length))
+
+
+def remove_circular_interval(sequence: str, start: int, length: int) -> str:
+    seq_len = len(sequence)
+    end = (start + length) % seq_len
+    if start + length <= seq_len:
+        return sequence[:start] + sequence[start + length :]
+    return sequence[end:start]
+
+
+def describe_circular_interval(start: int, length: int, total_length: int) -> str:
+    segments = circular_interval_segments(start, length, total_length)
+    pieces = [f"{seg_start + 1}-{seg_end}" for seg_start, seg_end in segments]
+    return ", ".join(pieces)
+
+
+def shade_circular_interval(ax, start: int, length: int, total_length: int, *, color: str, alpha: float, label: str) -> None:
+    segments = circular_interval_segments(start, length, total_length)
+    for idx, (seg_start, seg_end) in enumerate(segments):
+        ax.axvspan(
+            seg_start + 1,
+            seg_end,
+            color=color,
+            alpha=alpha,
+            label=label if idx == 0 else None,
+        )
+
 def create_multi_fasta(chunks, work_dir, out_fasta_prefix="plasmid_chunks"):
     """
     Writes each chunk as a separate FASTA entry into work_dir/out_fasta_prefix.fasta:
@@ -211,35 +327,37 @@ def calculate_background_from_plasmid(sam_plasmid, plasmid_seq, target_start, ta
         target_length: Length of target region
     
     Returns:
-        tuple: (total_mismatches, total_covered_bases, mapped_reads)
+        tuple: (total_mismatches, total_covered_bases, contributing_reads)
     """
-    target_end = target_start + target_length
-    
     # Initialize counters
     total_mismatches = 0
     total_covered_bases = 0
-    mapped_reads = 0
+    contributing_reads = 0
     
     samfile = pysam.AlignmentFile(sam_plasmid, "r")
     for read in samfile.fetch():
         if read.is_unmapped or read.query_sequence is None:
             continue
         
-        mapped_reads += 1
-        
+        contributed = False
+
         for read_pos, ref_pos in read.get_aligned_pairs(matches_only=False):
             if read_pos is not None and ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
                 # Skip positions within the target region
-                if target_start <= ref_pos < target_end:
+                if position_in_circular_interval(ref_pos, target_start, target_length, len(plasmid_seq)):
                     continue
-                
+
+                contributed = True
                 total_covered_bases += 1
                 if read.query_sequence[read_pos].upper() != plasmid_seq[ref_pos].upper():
                     total_mismatches += 1
+
+        if contributed:
+            contributing_reads += 1
     
     samfile.close()
     
-    return total_mismatches, total_covered_bases, mapped_reads
+    return total_mismatches, total_covered_bases, contributing_reads
 
 def calculate_rolling_mutation_rate_plasmid(sam_plasmid, plasmid_seq, window_size=20):
     """
@@ -298,23 +416,25 @@ def compute_mismatch_stats_sam(sam_file, refs_dict):
       - Compute total mismatches, total covered bases, average mismatch rate
 
     Returns a dict keyed by reference name, each containing:
-        pos_rates             -> list of mismatch rates per position
+        pos_rates             -> list of mismatch rates per position (NaN for uncovered positions)
         cov                   -> list of coverage per position
         mismatch              -> list of mismatch counts per position
         avg_mismatch_rate     -> float (raw per‐base fraction)
         total_mismatches      -> int
         total_covered_bases   -> int
         mapped_reads          -> int
+        uncovered_positions   -> int
     """
     mismatch_data = {
         name: {
-            "pos_rates": [0.0] * len(seq),
+            "pos_rates": [np.nan] * len(seq),
             "cov": [0] * len(seq),
             "mismatch": [0] * len(seq),
             "avg_mismatch_rate": 0.0,
             "total_mismatches": 0,
             "total_covered_bases": 0,
             "mapped_reads": 0,
+            "uncovered_positions": 0,
         }
         for name, seq in refs_dict.items()
     }
@@ -356,17 +476,19 @@ def compute_mismatch_stats_sam(sam_file, refs_dict):
                 total_mis += mis
                 total_cov += cov
             else:
-                pos_rates.append(0.0)
+                pos_rates.append(np.nan)
 
         info["pos_rates"] = pos_rates
         info["total_mismatches"] = total_mis
         info["total_covered_bases"] = total_cov
         info["avg_mismatch_rate"] = (total_mis / total_cov) if total_cov > 0 else 0.0
+        info["uncovered_positions"] = sum(1 for cov in info["cov"] if cov == 0)
 
         logging.info(
             f"{name}: mapped_reads={info['mapped_reads']}, "
             f"mismatches={total_mis}, covered_bases={total_cov}, "
-            f"avg_rate={info['avg_mismatch_rate']:.6f}"
+            f"avg_rate={info['avg_mismatch_rate']:.6f}, "
+            f"uncovered_positions={info['uncovered_positions']}"
         )
 
     return mismatch_data
@@ -489,10 +611,10 @@ def calculate_mutation_rate_for_quality(fastq_path, quality_threshold, work_dir,
         hit_seq, hit_id = load_single_sequence(ref_hit_fasta)
         plasmid_seq, plasmid_id = load_single_sequence(plasmid_fasta)
         
-        # Find hit region in plasmid
-        idx = plasmid_seq.upper().find(hit_seq.upper())
-        if idx == -1:
-            logging.error("Gene region not found in plasmid")
+        try:
+            roi_location = locate_gene_of_interest(plasmid_seq, hit_seq)
+        except ValueError as exc:
+            logging.error(str(exc))
             return None
         
         # Align filtered reads to hit region
@@ -502,7 +624,12 @@ def calculate_mutation_rate_for_quality(fastq_path, quality_threshold, work_dir,
         sam_plasmid = run_minimap2(filtered_fastq, plasmid_fasta, f"plasmid_q{quality_threshold}", work_dir)
         
         # Calculate background rate from full plasmid alignment, excluding target region
-        bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(sam_plasmid, plasmid_seq, idx, len(hit_seq))
+        bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(
+            sam_plasmid,
+            plasmid_seq,
+            roi_location["start"],
+            roi_location["length"],
+        )
         
         # Calculate hit region mutation rate
         mismatch_hit = compute_mismatch_stats_sam(sam_hit, {hit_id: hit_seq})
@@ -740,10 +867,10 @@ def run_segmented_analysis(segment_files, quality_threshold, work_dir, ref_hit_f
             hit_seq, hit_id = load_single_sequence(ref_hit_fasta)
             plasmid_seq, plasmid_id = load_single_sequence(plasmid_fasta)
             
-            # Find hit region in plasmid
-            idx = plasmid_seq.upper().find(hit_seq.upper())
-            if idx == -1:
-                logging.error(f"Gene region not found in plasmid for segment {i+1}")
+            try:
+                roi_location = locate_gene_of_interest(plasmid_seq, hit_seq)
+            except ValueError as exc:
+                logging.error("Segment %s: %s", i + 1, str(exc))
                 continue
             
             # Align filtered reads to hit region
@@ -753,7 +880,12 @@ def run_segmented_analysis(segment_files, quality_threshold, work_dir, ref_hit_f
             sam_plasmid = run_minimap2(filtered_segment, plasmid_fasta, f"plasmid_segment_{i+1}_q{quality_threshold}", work_dir)
             
             # Calculate background rate from full plasmid alignment, excluding target region
-            bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(sam_plasmid, plasmid_seq, idx, len(hit_seq))
+            bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(
+                sam_plasmid,
+                plasmid_seq,
+                roi_location["start"],
+                roi_location["length"],
+            )
             
             # Calculate hit region mutation rate
             mismatch_hit = compute_mismatch_stats_sam(sam_hit, {hit_id: hit_seq})
@@ -1495,7 +1627,7 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
 
     logging.info(
         f"Background (plasmid excluding target): total_mismatches={bg_mis}, "
-        f"covered_bases={bg_cov}, mapped_reads={bg_reads}, "
+        f"covered_bases={bg_cov}, contributing_reads={bg_reads}, "
         f"rate_per_kb={bg_rate_per_kb:.4f}"
     )
 
@@ -1505,13 +1637,15 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     hit_mis      = hit_info["total_mismatches"]
     hit_cov      = hit_info["total_covered_bases"]
     hit_reads    = hit_info["mapped_reads"]
+    hit_uncovered_positions = hit_info["uncovered_positions"]
     hit_rate     = hit_info["avg_mismatch_rate"]     # raw per‐base
     hit_rate_per_kb  = hit_rate * 1e3
 
     logging.info(
         f"Target ({hit_id}): total_mismatches={hit_mis}, "
         f"covered_bases={hit_cov}, mapped_reads={hit_reads}, "
-        f"rate_per_kb={hit_rate_per_kb:.4f}"
+        f"rate_per_kb={hit_rate_per_kb:.4f}, "
+        f"uncovered_positions={hit_uncovered_positions}"
     )
 
     # Two‐proportion Z‐test: is target rate > background rate?
@@ -1562,9 +1696,12 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     with open(gene_mismatch_csv, "w", newline="") as csvfile:
         csvfile.write(f"# gene_id: {hit_id}\n")
         csvfile.write(f"# background_rate_per_kb: {bg_rate_per_kb:.6f}\n")
-        csvfile.write("position_1based,mismatch_rate_per_base\n")
+        csvfile.write("position_1based,coverage,mismatches,mismatch_rate_per_base\n")
         for pos0, rate in enumerate(hit_info["pos_rates"]):
-            csvfile.write(f"{pos0 + 1},{rate:.6e}\n")
+            rate_str = "" if np.isnan(rate) else f"{rate:.6e}"
+            csvfile.write(
+                f"{pos0 + 1},{hit_info['cov'][pos0]},{hit_info['mismatch'][pos0]},{rate_str}\n"
+            )
     logging.info(f"Saved CSV for gene mismatch rates: {gene_mismatch_csv}")
 
     # ----------------------------
@@ -1688,11 +1825,9 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     ax1.tick_params(axis='both', which='minor', direction='in', length=3)
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
+    roi_label = f"ROI: {describe_circular_interval(idx, len(hit_seq), len(plasmid_seq))}"
+    shade_circular_interval(ax1, idx, len(hit_seq), len(plasmid_seq), color='gray', alpha=0.3, label=roi_label)
     ax1.legend(loc="upper right", frameon=False, fontsize=10)
-    # Shade the ROI region
-    start_roi = idx + 1
-    end_roi = idx + len(hit_seq)
-    ax1.axvspan(start_roi, end_roi, color='gray', alpha=0.3, label=f"ROI: {start_roi}–{end_roi}")
 
     # --- Panel 3: Coverage of plasmid with ROI shaded ---
     ax2 = axes[1, 0]
@@ -1706,9 +1841,8 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     ax2.tick_params(axis='both', which='minor', direction='in', length=3)
     ax2.spines['top'].set_visible(False)
     ax2.spines['right'].set_visible(False)
-    start_roi = idx + 1
-    end_roi   = idx + len(hit_seq)
-    ax2.axvspan(start_roi, end_roi, color='gray', alpha=0.3, label=f"ROI: {start_roi}–{end_roi}")
+    shade_circular_interval(ax2, idx, len(hit_seq), len(plasmid_seq), color='gray', alpha=0.3, label=roi_label)
+    ax2.legend(loc="upper right", frameon=False, fontsize=10)
 
     # --- Panel 4: KDE of AA mutations per copy ---
     ax3 = axes[1, 1]
@@ -1792,6 +1926,8 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     total_alt_counts = 0
 
     for pos0, rate in enumerate(hit_info["pos_rates"]):
+        if np.isnan(rate):
+            continue
         if rate <= bg_rate:
             continue
         ref_base = seq_upper[pos0]
@@ -1863,7 +1999,7 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
         txtf.write("1) Background (plasmid excluding target):\n")
         txtf.write(f"   • Total mismatches:                {bg_mis}\n")
         txtf.write(f"   • Total covered bases:             {bg_cov}\n")
-        txtf.write(f"   • Mapped reads:                    {bg_reads}\n")
+        txtf.write(f"   • Reads contributing background bases: {bg_reads}\n")
         txtf.write(f"   • Mismatch rate (per base):        {bg_rate:.6e}\n")
         txtf.write(f"   • Mismatch rate (per kb):          {bg_rate_per_kb:.6e}\n\n")
 
@@ -1871,7 +2007,8 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
         txtf.write(f"   • Gene ID:                         {hit_id}\n")
         txtf.write(f"   • Total mismatches:                {hit_mis}\n")
         txtf.write(f"   • Total covered bases:             {hit_cov}\n")
-        txtf.write(f"   • Mapped reads:                    {hit_reads}\n")
+        txtf.write(f"   • Reads mapped to ROI:             {hit_reads}\n")
+        txtf.write(f"   • Uncovered ROI positions:         {hit_uncovered_positions}\n")
         txtf.write(f"   • Mismatch rate (per base):        {hit_rate:.6e}\n")
         txtf.write(f"   • Mismatch rate (per kb):          {hit_rate_per_kb:.6e}\n")
         txtf.write(f"   • Z‐statistic:                     {z_stat:.4f}\n")
@@ -2061,17 +2198,24 @@ def process_single_fastq(
     logging.info("Plasmid length: %s bp", len(plasmid_seq))
     logging.info("Gene of interest length: %s bp", len(hit_seq))
 
-    idx = plasmid_seq.upper().find(hit_seq.upper())
-    if idx == -1:
-        logging.error("Gene region not found in plasmid")
+    try:
+        roi_location = locate_gene_of_interest(plasmid_seq, hit_seq)
+    except ValueError as exc:
+        logging.error(str(exc))
         return {
             "sample": sample_name,
             "results_dir": results_dir,
             "analysis_results": [],
         }
-    plasmid_no_gene = plasmid_seq[:idx] + plasmid_seq[idx + len(hit_seq):]
+    idx = roi_location["start"]
+    plasmid_no_gene = remove_circular_interval(plasmid_seq, idx, roi_location["length"])
 
-    logging.info("Gene found at position %s-%s (1-based)", idx + 1, idx + len(hit_seq))
+    logging.info(
+        "Gene found at plasmid positions %s (1-based), orientation=%s, wraps_origin=%s",
+        describe_circular_interval(idx, roi_location["length"], len(plasmid_seq)),
+        roi_location["orientation"],
+        roi_location["wraps"],
+    )
     logging.info("Background region length: %s bp", len(plasmid_no_gene))
 
     n_chunks = 10
