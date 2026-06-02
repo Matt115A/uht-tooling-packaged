@@ -14,6 +14,7 @@ from uht_tooling.web.pages import (
     umi_hunter,
     profile_inserts,
     ep_library,
+    ssm_profiler,
 )
 
 # Map of route suffix → (label, page builder)
@@ -34,6 +35,7 @@ _NAV_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
             ("/umi-hunter", "UMI Hunter", "qr_code"),
             ("/profile-inserts", "Profile Inserts", "insert_chart"),
             ("/ep-library", "EP Library Profile", "auto_graph"),
+            ("/ssm-profiler", "SSM Profiler", "genetics"),
         ],
     ),
 ]
@@ -162,3 +164,9 @@ def register_routes() -> None:
         with _page_wrapper("/ep-library"):
             with ui.element("div").classes("apple-content-inner"):
                 await ep_library.render()
+
+    @ui.page("/ssm-profiler")
+    async def page_ssm_profiler():
+        with _page_wrapper("/ssm-profiler"):
+            with ui.element("div").classes("apple-content-inner"):
+                await ssm_profiler.render()

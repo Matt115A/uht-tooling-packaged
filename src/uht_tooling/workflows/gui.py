@@ -27,6 +27,7 @@ from uht_tooling.workflows.mut_rate import run_ep_library_profile
 from uht_tooling.workflows.mutation_caller import run_mutation_caller
 from uht_tooling.workflows.nextera_designer import run_nextera_primer_design
 from uht_tooling.workflows.profile_inserts import run_profile_inserts
+from uht_tooling.workflows.ssm_profiler import parse_scheme_map, run_ssm_profiler
 from uht_tooling.workflows.umi_hunter import run_umi_hunter
 
 _LOGGER = logging.getLogger("uht_tooling.gui")
@@ -604,6 +605,64 @@ def run_gui_ep_library_profile(
         return summary, str(archive)
     except Exception as exc:  # pragma: no cover
         _LOGGER.exception("EP library profile GUI failure")
+        return f"⚠️ Error: {exc}", None
+    finally:
+        _clean_temp_path(work_dir)
+
+
+def run_gui_ssm_profiler(
+    fastq_files: Sequence[str],
+    region_fasta: Optional[str],
+    plasmid_fasta: Optional[str],
+    target_sites_text: str,
+    site_schemes_text: str,
+) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    try:
+        try:
+            validate_workflow_tools("ssm_profiler")
+        except ToolNotFoundError as e:
+            return f"Missing required tools: {e}", None
+
+        if not fastq_files or not region_fasta or not plasmid_fasta:
+            raise ValueError("Upload FASTQ(.gz) files plus region-of-interest and plasmid FASTA files.")
+
+        target_sites = [
+            int(chunk.strip())
+            for chunk in (target_sites_text or "").replace("\n", ",").split(",")
+            if chunk.strip()
+        ]
+        scheme_entries = [
+            line.strip()
+            for line in (site_schemes_text or "").replace(",", "\n").splitlines()
+            if line.strip()
+        ]
+        scheme_map = parse_scheme_map(scheme_entries)
+
+        output_dir = Path(tempfile.mkdtemp(prefix="uht_gui_ssm_out_"))
+        work_dir = Path(tempfile.mkdtemp(prefix="uht_gui_ssm_work_"))
+        results = run_ssm_profiler(
+            fastq_paths=[Path(f) for f in fastq_files],
+            region_fasta=Path(region_fasta),
+            plasmid_fasta=Path(plasmid_fasta),
+            output_dir=output_dir,
+            work_dir=work_dir,
+            target_sites=target_sites,
+            scheme_map=scheme_map,
+        )
+
+        master_summary = Path(results["master_summary"])
+        summary_text = master_summary.read_text() if master_summary.exists() else "Summary unavailable."
+        lines = ["### SSM Profiler", "", "**Master summary**", "```", summary_text.strip(), "```"]
+        for sample in results.get("samples", []):
+            lines.append(f"- {sample['sample']} → {sample['results_dir']}")
+        archive = _zip_paths(
+            [Path(sample["results_dir"]) for sample in results.get("samples", [])] + [master_summary],
+            "ssm_profiler",
+        )
+        return "\n".join(lines), str(archive)
+    except Exception as exc:  # pragma: no cover
+        _LOGGER.exception("SSM profiler GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
         _clean_temp_path(work_dir)

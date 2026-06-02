@@ -31,6 +31,7 @@ Some workflows require external bioinformatics tools:
 | mutation-caller | mafft |
 | umi-hunter | mafft |
 | ep-library-profile | minimap2, NanoFilt |
+| ssm-profiler | minimap2 |
 
 Install via conda:
 ```bash
@@ -77,6 +78,7 @@ Each command mirrors a workflow module. Common entry points:
 | `uht-tooling mutation-caller` | Summarise amino-acid substitutions from long-read FASTQ files. |
 | `uht-tooling umi-hunter` | Cluster UMIs and call consensus genes. |
 | `uht-tooling ep-library-profile` | Measure mutation rates in plasmid libraries without UMIs. |
+| `uht-tooling ssm-profiler` | Profile site-saturation libraries at target codons and compare observed vs expected AA distributions. |
 | `uht-tooling profile-inserts` | Extract and analyse inserts defined by flanking probe pairs. |
 
 Each command provides detailed help, including option descriptions and expected file formats:
@@ -105,14 +107,16 @@ uht-tooling design-slim -g gene.fa -c ctx.fa -m mut.csv -o out/
 | `--output-dir` | `-o` | 7 commands |
 | `--log-path` | `-l` | 7 commands |
 | `--template-fasta` | `-t` | mutation-caller, umi-hunter |
-| `--fastq` | `-q` | 4 commands |
+| `--fastq` | `-q` | 5 commands |
 | `--threshold` | `-T` | mutation-caller |
 | `--config-csv` | `-C` | umi-hunter |
 | `--binding-csv` | `-b` | nextera-primers |
 | `--probes-csv` | `-P` | profile-inserts |
-| `--region-fasta` | `-R` | ep-library-profile |
-| `--plasmid-fasta` | `-p` | ep-library-profile |
-| `--work-dir` | `-w` | ep-library-profile |
+| `--region-fasta` | `-R` | ep-library-profile, ssm-profiler |
+| `--plasmid-fasta` | `-p` | ep-library-profile, ssm-profiler |
+| `--work-dir` | `-w` | ep-library-profile, ssm-profiler |
+| `--target-site` | `-t` | ssm-profiler |
+| `--site-scheme` | `-s` | ssm-profiler |
 | `--config` | `-K` | global (all commands) |
 
 You can pass multiple FASTQ paths using repeated `--fastq` options or glob patterns. Optional `--log-path` flags redirect logs if you prefer a location outside the default results directory.
@@ -445,6 +449,33 @@ The `KEY_FINDINGS.txt` file provides a plain-language summary including:
 
 ---
 
+### SSM profiler
+
+- Inputs:
+  - ROI CDS FASTA
+  - Full plasmid FASTA
+  - FASTQ inputs (`--fastq` accepts multiple files)
+  - One or more target amino-acid sites via repeated `--target-site`
+  - Optional per-site degenerate codon schemes via repeated `--site-scheme`, e.g. `45:NNK`
+- Run:
+  ```bash
+  uht-tooling ssm-profiler \
+    --region-fasta data/ssm-profiler/roi_cds.fasta \
+    --plasmid-fasta data/ssm-profiler/plasmid.fasta \
+    --target-site 45 --target-site 46 --target-site 47 \
+    --site-scheme 45:NNK --site-scheme 46:NNK --site-scheme 47:NNW \
+    --fastq data/ssm-profiler/*.fastq.gz \
+    --output-dir results/ssm-profiler/
+  ```
+- Reports:
+  - Per-target-site codon-complete coverage and non-reference AA fraction
+  - Observed AA distributions at each target site
+  - Observed-vs-expected AA distributions when schemes are supplied
+  - Off-target mismatch rates elsewhere in the ROI, compared against plasmid background
+  - A target-site mutational-load summary that only counts the specified codons
+
+---
+
 ## GUI quick start (optional)
 
 The NiceGUI web frontend wraps the same workflows with an Apple-inspired design and sidebar navigation. Launch it with:
@@ -470,6 +501,7 @@ The sidebar organises workflows into two groups:
 - UMI Hunter (`/umi-hunter`)
 - Profile Inserts (`/profile-inserts`)
 - EP Library (`/ep-library`)
+- SSM Profiler (`/ssm-profiler`)
 
 ### Features
 

@@ -25,6 +25,11 @@ from uht_tooling.workflows.mut_rate import (
     expand_fastq_inputs as expand_fastq_inputs_ep,
     run_ep_library_profile,
 )
+from uht_tooling.workflows.ssm_profiler import (
+    expand_fastq_inputs as expand_fastq_inputs_ssm,
+    parse_scheme_map,
+    run_ssm_profiler,
+)
 from uht_tooling.web import launch_web_gui
 
 app = typer.Typer(help="Command-line interface for the uht-tooling package.")
@@ -501,6 +506,98 @@ def ep_library_profile_command(
     samples = results.get("samples", [])
     if not samples:
         typer.echo("No ep-library profile outputs generated.")
+    else:
+        typer.echo(f"Master summary written to {results['master_summary']}")
+        for sample in samples:
+            typer.echo(f"  Sample {sample['sample']}: {sample['results_dir']}")
+
+
+@app.command("ssm-profiler", help="Profile site-saturation mutagenesis libraries at target codons.")
+def ssm_profiler_command(
+    ctx: typer.Context,
+    region_fasta: Path = typer.Option(
+        ...,
+        "--region-fasta",
+        "-R",
+        exists=True,
+        readable=True,
+        help="Coding-sequence FASTA for the region of interest.",
+    ),
+    plasmid_fasta: Path = typer.Option(
+        ...,
+        "--plasmid-fasta",
+        "-p",
+        exists=True,
+        readable=True,
+        help="FASTA file with the full plasmid sequence.",
+    ),
+    target_site: list[int] = typer.Option(
+        ...,
+        "--target-site",
+        "-t",
+        help="Target amino-acid position(s), 1-based relative to the ROI CDS. Repeat for multiple sites.",
+    ),
+    site_scheme: list[str] = typer.Option(
+        [],
+        "--site-scheme",
+        "-s",
+        help="Optional mapping of site to degenerate codon scheme, e.g. 45:NNK. Repeat as needed.",
+    ),
+    fastq: list[str] = typer.Option(
+        ...,
+        "--fastq",
+        "-q",
+        help="One or more FASTQ(.gz) paths or glob patterns (multiple --fastq options allowed).",
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        dir_okay=True,
+        writable=True,
+        help=(
+            "Directory for per-sample outputs. Must be inside a workspace containing "
+            "a '.uht_tooling_workspace' sentinel file."
+        ),
+    ),
+    work_dir: Optional[Path] = typer.Option(
+        None,
+        "--work-dir",
+        "-w",
+        dir_okay=True,
+        writable=True,
+        help=(
+            "Optional scratch directory for intermediate files (defaults to output/tmp). "
+            "Must be inside a workspace containing a '.uht_tooling_workspace' sentinel file."
+        ),
+    ),
+):
+    """Quantify target-site amino-acid composition in SSM libraries."""
+    try:
+        validate_workflow_tools("ssm_profiler")
+    except ToolNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    fastq_files = expand_fastq_inputs_ssm(fastq)
+    try:
+        scheme_map = parse_scheme_map(site_scheme)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+    results = run_ssm_profiler(
+        fastq_paths=fastq_files,
+        region_fasta=region_fasta,
+        plasmid_fasta=plasmid_fasta,
+        output_dir=output_dir,
+        target_sites=target_site,
+        scheme_map=scheme_map,
+        work_dir=work_dir,
+    )
+    samples = results.get("samples", [])
+    if not samples:
+        typer.echo("No SSM profiler outputs generated.")
     else:
         typer.echo(f"Master summary written to {results['master_summary']}")
         for sample in samples:

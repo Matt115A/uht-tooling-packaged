@@ -97,6 +97,7 @@ WORKFLOW_TOOLS: Dict[str, List[str]] = {
     "mutation_caller": ["mafft"],
     "umi_hunter": ["mafft"],
     "ep_library_profile": ["minimap2", "NanoFilt"],
+    "ssm_profiler": ["minimap2"],
 }
 
 
