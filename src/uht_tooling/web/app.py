@@ -35,7 +35,7 @@ _NAV_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
             ("/umi-hunter", "UMI Hunter", "qr_code"),
             ("/profile-inserts", "Profile Inserts", "insert_chart"),
             ("/ep-library", "EP Library Profile", "auto_graph"),
-            ("/ssm-profiler", "SSM Profiler", "genetics"),
+            ("/ssm-profiler", "SSM Profiler", "track_changes"),
         ],
     ),
 ]
