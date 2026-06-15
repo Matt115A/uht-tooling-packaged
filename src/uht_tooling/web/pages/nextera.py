@@ -20,6 +20,21 @@ async def render() -> None:
         "Nextera XT Primer Design",
         "Generate Nextera XT-ready primers from forward/reverse binding regions.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow generates **Nextera XT-compatible primer pairs** from two user-supplied binding regions.
+
+- You provide one **forward binding region** and one **reverse binding region**, both in 5'→3' orientation.
+- The tool combines those regions with the built-in Nextera XT indexing scheme to produce ready-to-order primers.
+- The package ships with **12 i5** and **12 i7** indices, which supports up to **144 indexed amplicon combinations**.
+- The output is a simple primer table intended for ordering and downstream amplicon prep.
+
+Outputs:
+
+- primer CSV with columns `primer_name` and `sequence`
+                """
+            ).classes("apple-markdown")
         fwd = apple_input("Forward primer (5'\u21923')", "e.g. ATCGATCG...")
         rev = apple_input("Reverse primer (5'\u21923')", "e.g. GCTAGCTA...")
 

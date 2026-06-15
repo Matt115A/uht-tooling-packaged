@@ -6,6 +6,8 @@ from nicegui import app, ui
 
 from uht_tooling.web.theme import APPLE_CSS
 from uht_tooling.web.pages import (
+    gene_oligos,
+    synthetic_genes,
     nextera,
     slim,
     kld,
@@ -26,6 +28,13 @@ _NAV_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
             ("/slim", "SLIM", "biotech"),
             ("/kld", "KLD", "loop"),
             ("/gibson", "Gibson", "merge_type"),
+        ],
+    ),
+    (
+        "Synthetic Genes",
+        [
+            ("/synthetic-genes", "Pool Ordering for CFPS", "inventory_2"),
+            ("/gene-oligos", "Cheap Genes", "dataset"),
         ],
     ),
     (
@@ -128,6 +137,18 @@ def register_routes() -> None:
         with _page_wrapper("/slim"):
             with ui.element("div").classes("apple-content-inner"):
                 await slim.render()
+
+    @ui.page("/gene-oligos")
+    async def page_gene_oligos():
+        with _page_wrapper("/gene-oligos"):
+            with ui.element("div").classes("apple-content-inner"):
+                await gene_oligos.render()
+
+    @ui.page("/synthetic-genes")
+    async def page_synthetic_genes():
+        with _page_wrapper("/synthetic-genes"):
+            with ui.element("div").classes("apple-content-inner"):
+                await synthetic_genes.render()
 
     @ui.page("/kld")
     async def page_kld():

@@ -21,6 +21,22 @@ async def render() -> None:
         "Plan primer sets and assembly steps for Gibson mutagenesis, supporting "
         "multi-mutation constructs using the + syntax (e.g. A123G+T150A).",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow designs **Gibson assembly mutagenesis primers** and a matching assembly plan.
+
+- You can specify **single mutations** or link multiple sub-mutations with `+` to define a combined construct, such as `A123G+T150A`.
+- The tool breaks each construct into the PCR fragments needed for Gibson assembly and assigns the required primer pairs.
+- It reports an explicit **assembly plan** with primer usage, fragment grouping, estimated Tm, and amplicon size.
+- If requested mutations conflict within overlapping primer windows, the workflow can push you toward **sequential assembly steps** instead of a single reaction.
+
+Outputs:
+
+- `Gibson_primers.csv`: designed primers grouped by construct and submutation
+- `Gibson_assembly_plan.csv`: PCR/assembly plan with primer assignments and amplicon sizes
+                """
+            ).classes("apple-markdown")
         gene = apple_textarea(
             "Gene sequence",
             "Paste the coding sequence for the gene of interest...",

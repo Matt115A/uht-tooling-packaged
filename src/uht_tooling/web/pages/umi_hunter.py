@@ -29,6 +29,24 @@ async def render() -> None:
         "Detect UMI barcodes, extract paired gene inserts, cluster reads by UMI "
         "identity, and emit consensus sequences with abundance tables.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow groups reads by **unique molecular identifier (UMI)** and builds **consensus gene sequences** from those clusters.
+
+- It locates the UMI using the user-supplied **UMI flanks** and length bounds.
+- It locates the gene insert using the separate **gene flanks**.
+- Reads with similar UMIs are clustered together using the **UMI identity threshold**.
+- Within each cluster, a base is written into the consensus only when enough reads agree, controlled by the **consensus mutation threshold**.
+- Clusters smaller than the **minimum cluster size** are retained in the raw cluster table but do not produce a consensus FASTA entry.
+
+Outputs per sample:
+
+- `*_UMI_clusters.csv`: raw UMI clustering summary
+- `*_gene_consensus.csv`: consensus gene calls and cluster counts
+- `*_consensuses.fasta`: consensus sequences for sufficiently supported clusters
+                """
+            ).classes("apple-markdown")
         # File state
         fastq_path: dict[str, Optional[str]] = {"value": None}
         template_path: dict[str, Optional[str]] = {"value": None}

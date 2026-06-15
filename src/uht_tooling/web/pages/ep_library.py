@@ -27,6 +27,25 @@ async def render() -> None:
         "identify commonly mutated sites in a plasmid pool and their relative "
         "abundances, and compare variant enrichments between DNA pools.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow profiles **error-prone or heterogeneous plasmid pools** from long-read sequencing data without UMIs.
+
+- It aligns reads to both the **region of interest (ROI)** and the full **plasmid**.
+- The plasmid is treated as **circular**, so the ROI can be forward, reverse-complemented, or split across the plasmid origin and still be found.
+- Mismatch rates inside the ROI are compared against plasmid-wide background outside the ROI to estimate a **net mutation rate**.
+- The profiler reports a single **lambda** value, interpreted as mutations per gene copy, and uses simulation to estimate the expected **amino-acid mutation burden**.
+- Each sample gets both technical outputs and a more readable summary package.
+
+Outputs include:
+
+- per-sample summary panels
+- detailed mismatch and amino-acid substitution tables
+- sample reports and mutation-spectrum plots
+- top-level master summary when multiple FASTQs are processed
+                """
+            ).classes("apple-markdown")
         # File state
         fastq_paths: List[str] = []
         region_path: dict[str, Optional[str]] = {"value": None}

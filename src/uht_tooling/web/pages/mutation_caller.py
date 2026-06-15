@@ -29,6 +29,24 @@ async def render() -> None:
         "Extract coding regions bounded by user-defined flanks, align to the "
         "template, and report amino-acid substitutions.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow analyzes **long-read sequencing data without UMIs** and summarizes amino-acid substitutions in a defined coding region.
+
+- It uses the supplied **upstream** and **downstream flanks** to find the gene region inside each read.
+- The extracted coding sequence is aligned to the provided **template FASTA**.
+- Amino-acid substitutions are counted and summarized per sample.
+- The tool also produces **co-occurrence tables** for substitutions that appear together, although those co-occurrence outputs are still marked **experimental** in the current docs.
+
+Outputs per sample:
+
+- amino-acid substitution frequency plot
+- filtered substitution-count tables
+- co-occurrence summary tables
+- plain-text report
+                """
+            ).classes("apple-markdown")
         # File state
         fastq_path: dict[str, Optional[str]] = {"value": None}
         template_path: dict[str, Optional[str]] = {"value": None}

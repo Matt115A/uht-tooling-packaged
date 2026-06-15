@@ -28,6 +28,23 @@ async def render() -> None:
         "Characterise inserts demarcated by upstream/downstream probes, extract "
         "sequences, and produce QC plots plus summary tables.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow extracts insert sequences from reads using user-defined **upstream** and **downstream probe pairs**.
+
+- Each probe pair defines an expected insert boundary.
+- The tool scans uploaded reads for those probes, tolerating imperfect matches according to the **minimum fuzzy-match ratio**.
+- Matching inserts are extracted and collected into a FASTA output.
+- The workflow then summarizes insert lengths, GC content, duplicate behavior, and probe performance in text and plot form.
+
+Outputs:
+
+- `extracted_inserts.fasta`: all recovered inserts
+- `qc_report.txt`: summary statistics and probe-level QC
+- `qc_plots.png`: multi-panel QC visualization
+                """
+            ).classes("apple-markdown")
         # Editable probe pairs
         ui.label("Probe Pairs").classes("text-xs font-semibold").style(
             "color: var(--text-secondary); margin-bottom: 4px;"

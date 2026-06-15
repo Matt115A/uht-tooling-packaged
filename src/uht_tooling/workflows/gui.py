@@ -20,7 +20,12 @@ except ImportError:  # pragma: no cover - gradio only needed for legacy GUI
     gr = None  # type: ignore[assignment]
 
 from uht_tooling.tools import ToolNotFoundError, validate_workflow_tools
+from uht_tooling.workflows.design_gene_oligos import (
+    run_design_gene_oligos,
+    run_length_optimize_gene_oligos,
+)
 from uht_tooling.workflows.design_gibson import run_design_gibson
+from uht_tooling.workflows.design_synthetic_gene_pool import run_design_synthetic_gene_pool
 from uht_tooling.workflows.design_kld import run_design_kld
 from uht_tooling.workflows.design_slim import run_design_slim
 from uht_tooling.workflows.mut_rate import run_ep_library_profile
@@ -298,6 +303,161 @@ def run_gui_design_gibson(
         return summary, str(archive)
     except Exception as exc:  # pragma: no cover
         _LOGGER.exception("Gibson GUI failure")
+        return f"⚠️ Error: {exc}", None
+    finally:
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
+
+
+def run_gui_design_gene_oligos(
+    sequence_content: str,
+    input_type: str,
+    target_oligo_length: float,
+    max_order_once_length: float,
+    target_host: str,
+    tag_mode: str,
+) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
+    try:
+        sequence = _ensure_text(sequence_content, "Input sequence")
+        work_dir = Path(tempfile.mkdtemp(prefix="uht_gui_gene_oligos_work_"))
+        output_dir = Path(tempfile.mkdtemp(prefix="uht_gui_gene_oligos_out_"))
+
+        sequence_fasta = work_dir / "input.fasta"
+        if sequence.lstrip().startswith(">"):
+            sequence_fasta.write_text(sequence.rstrip() + "\n")
+        else:
+            sequence_fasta.write_text(f">input\n{sequence}\n")
+
+        outputs = run_design_gene_oligos(
+            sequence_fasta=sequence_fasta,
+            output_dir=output_dir,
+            input_type=input_type,
+            target_oligo_length=int(target_oligo_length),
+            max_order_once_length=int(max_order_once_length),
+            target_host=target_host,
+            tag_mode=tag_mode,
+        )
+
+        oligos_csv = Path(outputs["oligos_csv"])
+        assembly_csv = Path(outputs["assembly_csv"])
+        summary = _format_header("Gene Oligo Design") + "\n".join(
+            [
+                "**Oligo preview**",
+                _preview_csv(oligos_csv),
+                "",
+                "**Assembly summary**",
+                _preview_csv(assembly_csv),
+                "",
+                f"External primers: `{Path(outputs['external_csv']).name}`",
+                f"Plate order map: `{Path(outputs['plate_csv']).name}`",
+            ]
+        )
+        archive = _zip_paths([output_dir], "gene_oligos")
+        return summary, str(archive)
+    except Exception as exc:  # pragma: no cover
+        _LOGGER.exception("Gene oligo GUI failure")
+        return f"⚠️ Error: {exc}", None
+    finally:
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
+
+
+def run_gui_length_optimize_gene_oligos(
+    sequence_content: str,
+    input_type: str,
+    max_length_cap: float,
+    max_order_once_length: float,
+    target_host: str,
+    tag_mode: str,
+) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
+    try:
+        sequence = _ensure_text(sequence_content, "Input sequence")
+        work_dir = Path(tempfile.mkdtemp(prefix="uht_gui_gene_oligos_opt_work_"))
+        output_dir = Path(tempfile.mkdtemp(prefix="uht_gui_gene_oligos_opt_out_"))
+
+        sequence_fasta = work_dir / "input.fasta"
+        if sequence.lstrip().startswith(">"):
+            sequence_fasta.write_text(sequence.rstrip() + "\n")
+        else:
+            sequence_fasta.write_text(f">input\n{sequence}\n")
+
+        outputs = run_length_optimize_gene_oligos(
+            sequence_fasta=sequence_fasta,
+            output_dir=output_dir,
+            input_type=input_type,
+            max_length_cap=int(max_length_cap),
+            max_order_once_length=int(max_order_once_length),
+            target_host=target_host,
+            tag_mode=tag_mode,
+        )
+
+        optimization_csv = Path(outputs["optimization_csv"])
+        summary_txt = Path(outputs["optimization_summary"])
+        summary = _format_header("Length Optimization") + "\n".join(
+            [
+                "**Candidate scan**",
+                _preview_csv(optimization_csv),
+                "",
+                "**Recommendation**",
+                f"```text\n{summary_txt.read_text(encoding='utf-8').strip()}\n```",
+            ]
+        )
+        archive = _zip_paths([output_dir], "gene_oligos_length_opt")
+        return summary, str(archive)
+    except Exception as exc:  # pragma: no cover
+        _LOGGER.exception("Gene oligo length optimization GUI failure")
+        return f"⚠️ Error: {exc}", None
+    finally:
+        _clean_temp_path(work_dir)
+        _clean_temp_path(output_dir)
+
+
+def run_gui_design_synthetic_gene_pool(
+    sequence_content: str,
+    input_type: str,
+    tag_mode: str,
+) -> Tuple[str, Optional[str]]:
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
+    try:
+        sequence = _ensure_text(sequence_content, "Input sequence")
+        work_dir = Path(tempfile.mkdtemp(prefix="uht_gui_synth_pool_work_"))
+        output_dir = Path(tempfile.mkdtemp(prefix="uht_gui_synth_pool_out_"))
+
+        sequence_fasta = work_dir / "input.fasta"
+        if sequence.lstrip().startswith(">"):
+            sequence_fasta.write_text(sequence.rstrip() + "\n")
+        else:
+            sequence_fasta.write_text(f">input\n{sequence}\n")
+
+        outputs = run_design_synthetic_gene_pool(
+            sequence_fasta=sequence_fasta,
+            output_dir=output_dir,
+            input_type=input_type,
+            tag_mode=tag_mode,
+        )
+
+        pool_csv = Path(outputs["pool_csv"])
+        primer_csv = Path(outputs["primer_csv"])
+        summary = _format_header("Synthetic Gene Pool") + "\n".join(
+            [
+                "**Pool oligo preview**",
+                _preview_csv(pool_csv),
+                "",
+                "**Common primer preview**",
+                _preview_csv(primer_csv),
+                "",
+                f"Ordering list: `{Path(outputs['ordering_tsv']).name}`",
+            ]
+        )
+        archive = _zip_paths([output_dir], "synthetic_gene_pool")
+        return summary, str(archive)
+    except Exception as exc:  # pragma: no cover
+        _LOGGER.exception("Synthetic gene pool GUI failure")
         return f"⚠️ Error: {exc}", None
     finally:
         _clean_temp_path(work_dir)

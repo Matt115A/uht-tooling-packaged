@@ -5,6 +5,13 @@ import typer
 
 from uht_tooling.config import get_option, load_config
 from uht_tooling.tools import ToolNotFoundError, validate_workflow_tools
+from uht_tooling.workflows.design_gene_oligos import (
+    DEFAULT_MAX_ORDER_ONCE_LENGTH,
+    DEFAULT_TARGET_HOST,
+    run_design_gene_oligos,
+    run_length_optimize_gene_oligos,
+)
+from uht_tooling.workflows.design_synthetic_gene_pool import run_design_synthetic_gene_pool
 from uht_tooling.workflows.design_gibson import run_design_gibson
 from uht_tooling.workflows.design_kld import run_design_kld
 from uht_tooling.workflows.design_slim import run_design_slim
@@ -245,6 +252,203 @@ def design_gibson_command(
         log_path=log_path,
     )
     typer.echo("Gibson outputs written:")
+    for name, path in outputs.items():
+        typer.echo(f"  {name}: {path}")
+
+
+@app.command("design-gene-oligos", help="Design overlap-extension PCR oligos for IVTT-ready gene constructs.")
+def design_gene_oligos_command(
+    ctx: typer.Context,
+    sequence_fasta: Path = typer.Option(
+        ..., "--sequence-fasta", "-s", exists=True, readable=True, help="Path to the DNA or protein FASTA file."
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        dir_okay=True,
+        writable=True,
+        help="Directory where oligo design outputs will be written.",
+    ),
+    input_type: str = typer.Option(
+        "auto",
+        "--input-type",
+        help="Interpret the input as auto, dna, or protein.",
+    ),
+    target_oligo_length: int = typer.Option(
+        40,
+        "--target-oligo-length",
+        min=20,
+        help="Maximum allowed gene-specific oligo length in nucleotides.",
+    ),
+    max_order_once_length: int = typer.Option(
+        DEFAULT_MAX_ORDER_ONCE_LENGTH,
+        "--max-orderonce-length",
+        min=20,
+        help="Maximum allowed length for reusable order-once oligos.",
+    ),
+    target_host: str = typer.Option(
+        DEFAULT_TARGET_HOST,
+        "--target-host",
+        help="Target host used for automatic codon optimization of protein inputs.",
+    ),
+    tag_mode: str = typer.Option(
+        "none",
+        "--tag-mode",
+        help="One of: none, n_his, c_his, n_his_flag, c_his_flag.",
+    ),
+    log_path: Optional[Path] = typer.Option(
+        None,
+        "--log-path",
+        "-l",
+        dir_okay=False,
+        writable=True,
+        help="Optional path to write a dedicated log file for this run.",
+    ),
+):
+    """Design overlap-extension PCR oligos for a single IVTT-ready construct."""
+    config = ctx.obj.get("config", {}) if ctx.obj else {}
+    target_oligo_length = get_option(
+        config,
+        "target_oligo_length",
+        target_oligo_length,
+        default=40,
+        workflow="design_gene_oligos",
+    )
+    outputs = run_design_gene_oligos(
+        sequence_fasta=sequence_fasta,
+        output_dir=output_dir,
+        input_type=input_type,
+        target_oligo_length=int(target_oligo_length),
+        max_order_once_length=int(max_order_once_length),
+        target_host=target_host,
+        tag_mode=tag_mode,
+        log_path=log_path,
+        config=config,
+    )
+    typer.echo("Gene oligo outputs written:")
+    for name, path in outputs.items():
+        typer.echo(f"  {name}: {path}")
+
+
+@app.command("length-optimize-gene-oligos", help="Scan max-length caps and rank gene-oligo assembly strategies.")
+def length_optimize_gene_oligos_command(
+    ctx: typer.Context,
+    sequence_fasta: Path = typer.Option(
+        ..., "--sequence-fasta", "-s", exists=True, readable=True, help="Path to the DNA or protein FASTA file."
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        dir_okay=True,
+        writable=True,
+        help="Directory where optimization outputs will be written.",
+    ),
+    input_type: str = typer.Option(
+        "auto",
+        "--input-type",
+        help="Interpret the input as auto, dna, or protein.",
+    ),
+    max_length_cap: int = typer.Option(
+        120,
+        "--max-length-cap",
+        min=20,
+        help="Upper bound for scanned gene-specific oligo lengths.",
+    ),
+    scan_length: list[int] = typer.Option(
+        [],
+        "--scan-length",
+        help="Explicit max-length value(s) to test. Repeat as needed; defaults to a built-in scan set.",
+    ),
+    max_order_once_length: int = typer.Option(
+        DEFAULT_MAX_ORDER_ONCE_LENGTH,
+        "--max-orderonce-length",
+        min=20,
+        help="Maximum allowed length for reusable order-once oligos.",
+    ),
+    target_host: str = typer.Option(
+        DEFAULT_TARGET_HOST,
+        "--target-host",
+        help="Target host used for automatic codon optimization of protein inputs.",
+    ),
+    tag_mode: str = typer.Option(
+        "none",
+        "--tag-mode",
+        help="One of: none, n_his, c_his, n_his_flag, c_his_flag.",
+    ),
+    log_path: Optional[Path] = typer.Option(
+        None,
+        "--log-path",
+        "-l",
+        dir_okay=False,
+        writable=True,
+        help="Optional path to write a dedicated log file for this run.",
+    ),
+):
+    """Scan candidate max-length caps and recommend a primer-economical strategy."""
+    config = ctx.obj.get("config", {}) if ctx.obj else {}
+    outputs = run_length_optimize_gene_oligos(
+        sequence_fasta=sequence_fasta,
+        output_dir=output_dir,
+        input_type=input_type,
+        max_length_cap=max_length_cap,
+        candidate_lengths=scan_length or None,
+        max_order_once_length=max_order_once_length,
+        target_host=target_host,
+        tag_mode=tag_mode,
+        log_path=log_path,
+        config=config,
+    )
+    typer.echo("Length optimization outputs written:")
+    for name, path in outputs.items():
+        typer.echo(f"  {name}: {path}")
+
+
+@app.command("design-synthetic-gene-pool", help="Design pooled synthetic-gene ordering oligos and common lift-out primers.")
+def design_synthetic_gene_pool_command(
+    ctx: typer.Context,
+    sequence_fasta: Path = typer.Option(
+        ..., "--sequence-fasta", "-s", exists=True, readable=True, help="Path to the DNA or protein FASTA file."
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        dir_okay=True,
+        writable=True,
+        help="Directory where synthetic-gene pool outputs will be written.",
+    ),
+    input_type: str = typer.Option(
+        "auto",
+        "--input-type",
+        help="Interpret the input as auto, dna, or protein.",
+    ),
+    tag_mode: str = typer.Option(
+        "none",
+        "--tag-mode",
+        help="One of: none, n_his, c_his, n_his_flag, c_his_flag.",
+    ),
+    log_path: Optional[Path] = typer.Option(
+        None,
+        "--log-path",
+        "-l",
+        dir_okay=False,
+        writable=True,
+        help="Optional path to write a dedicated log file for this run.",
+    ),
+):
+    """Design a pooled synthetic-gene ordering set with reusable primers."""
+    config = ctx.obj.get("config", {}) if ctx.obj else {}
+    outputs = run_design_synthetic_gene_pool(
+        sequence_fasta=sequence_fasta,
+        output_dir=output_dir,
+        input_type=input_type,
+        tag_mode=tag_mode,
+        log_path=log_path,
+        config=config,
+    )
+    typer.echo("Synthetic gene pool outputs written:")
     for name, path in outputs.items():
         typer.echo(f"  {name}: {path}")
 

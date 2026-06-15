@@ -72,6 +72,8 @@ Each command mirrors a workflow module. Common entry points:
 | Command | Purpose |
 | --- | --- |
 | `uht-tooling nextera-primers` | Generate Nextera XT primer pairs from a binding-region CSV. |
+| `uht-tooling design-gene-oligos` | Design overlap-extension PCR oligos for IVTT-ready gene constructs. |
+| `uht-tooling design-synthetic-gene-pool` | Design pooled synthetic-gene ordering oligos plus a reusable lift-out primer pair. |
 | `uht-tooling design-slim` | Design SLIM mutagenesis primers from FASTA/CSV inputs. |
 | `uht-tooling design-kld` | Design KLD (inverse PCR) mutagenesis primers. |
 | `uht-tooling design-gibson` | Produce Gibson mutagenesis primers and assembly plans. |
@@ -104,8 +106,10 @@ uht-tooling design-slim -g gene.fa -c ctx.fa -m mut.csv -o out/
 | `--gene-fasta` | `-g` | design-slim, design-kld, design-gibson |
 | `--context-fasta` | `-c` | design-slim, design-kld, design-gibson |
 | `--mutations-csv` | `-m` | design-slim, design-kld, design-gibson |
-| `--output-dir` | `-o` | 7 commands |
-| `--log-path` | `-l` | 7 commands |
+| `--sequence-fasta` | `-s` | design-gene-oligos |
+| `--sequence-fasta` | `-s` | design-synthetic-gene-pool |
+| `--output-dir` | `-o` | 8 commands |
+| `--log-path` | `-l` | 8 commands |
 | `--template-fasta` | `-t` | mutation-caller, umi-hunter |
 | `--fastq` | `-q` | 5 commands |
 | `--threshold` | `-T` | mutation-caller |
@@ -141,11 +145,48 @@ paths:
   output_dir: ~/results/uht-tooling
 
 defaults:
+  design_gene_oligos:
+    target_oligo_length: 40
   mutation_caller:
     threshold: 15
   umi_hunter:
     umi_identity_threshold: 0.85
     min_cluster_size: 5
+
+gene_oligos:
+  constant_5prime_dna: TAATACGACTCACTATAGGGAGA
+  constant_3prime_dna: GCGTTTTTTTTT
+  stop_codon: TAA
+  tags:
+    n_his:
+      dna: CATCATCATCATCATCAT
+    c_his:
+      dna: CATCATCATCATCATCAT
+    n_his_flag:
+      dna: CATCATCATCATCATCATGACTACAAAGACGATGACGACAAG
+    c_his_flag:
+      dna: CATCATCATCATCATCATGACTACAAAGACGATGACGACAAG
+  codon_table:
+    A: GCT
+    C: TGT
+    D: GAT
+    E: GAA
+    F: TTT
+    G: GGT
+    H: CAT
+    I: ATT
+    K: AAA
+    L: CTG
+    M: ATG
+    N: AAT
+    P: CCT
+    Q: CAA
+    R: CGT
+    S: TCT
+    T: ACT
+    V: GTT
+    W: TGG
+    Y: TAT
 ```
 
 CLI options always take precedence over config values.
@@ -153,6 +194,73 @@ CLI options always take precedence over config values.
 ---
 
 ## Workflow reference
+
+### Gene oligo designer
+
+Design one or more IVTT-ready constructs from DNA or protein FASTA input and tile them into overlap-extension PCR oligos.
+The workflow has built-in T7 defaults for the 5' cassette, 3' terminator, and common His/His+FLAG tags. Protein inputs are automatically codon-optimized for the selected host using `dnachisel`; DNA inputs are preserved apart from start/stop normalization.
+
+**Inputs:**
+- `--sequence-fasta` — FASTA containing one or more GOIs as DNA or protein
+- `--input-type` — `auto`, `dna`, or `protein`
+- `--target-oligo-length` — maximum allowed gene-specific oligo length in nt (minimum `20`, default `40`); the workflow chooses the longest feasible size at or below this limit to minimize primer count
+- `--max-orderonce-length` — maximum allowed length for reusable constant oligos (default `80`)
+- `--target-host` — host identifier used for automatic protein codon optimization (default `e_coli`)
+- `--tag-mode` — `none`, `n_his`, `c_his`, `n_his_flag`, or `c_his_flag`
+- `--output-dir` — destination for oligos, construct FASTA, and run log
+
+**Outputs:**
+- `gene_oligos.csv` — per-target OE oligos plus reusable external primers, with overlap metrics, `constant` vs `gene_specific` role, and `order_once` vs `order_per_target`
+- `assembly_report.csv` — one row per target with start/stop-codon normalization and recommended assembly strategy
+- `final_constructs.fasta` — assembled IVTT-ready constructs for all targets
+- `ordered_oligos.fasta` — deduplicated oligos in 5'→3' ordering orientation
+- `ordering_plate.csv` — 96-well plate layout at 20 uM stock concentration
+- `external_primers.csv` — reusable outer primers for production-scale full-length amplification
+- `assembly_instructions.txt` — suggested OE-PCR workflow and block-assembly guidance
+
+Reusable edge oligos are emitted as `CONST_EDGE_5P` and `CONST_EDGE_3P`. These are the preferred `order_once` oligos and are allowed to be longer than the per-target OE oligos so they can absorb the promoter, start codon, terminator, and any configured terminal tag. In the web UI, the maximum allowed length for these reusable oligos is available under the collapsed **Extra settings** panel.
+
+Example:
+
+```bash
+uht-tooling --config .uht-tooling.yaml design-gene-oligos \
+  --sequence-fasta data/gene_oligos/target.fasta \
+  --input-type protein \
+  --target-oligo-length 40 \
+  --tag-mode n_his \
+  --output-dir results/design_gene_oligos/
+```
+
+If you do not provide a `gene_oligos:` section in your YAML config, the built-in defaults are used automatically.
+The workflow auto-detects and removes terminal stop codons from the user input, adds a start codon when an untagged or C-terminally tagged construct lacks one, and inserts an initiating `ATG` immediately before an N-terminal tag. For protein inputs, host-aware codon optimization is applied automatically before oligo design.
+
+### Synthetic gene pool
+
+Design a pooled ordering set for E. coli T7 cell-free protein synthesis where each target is represented by one oligo flanked by shared lift-out handles, and a single reusable primer pair adds the final 5' and 3' constant regions plus optional tags.
+
+**Inputs:**
+- `--sequence-fasta` — FASTA containing one or more GOIs as DNA or protein
+- `--input-type` — `auto`, `dna`, or `protein`
+- `--tag-mode` — `none`, `n_his`, `c_his`, `n_his_flag`, or `c_his_flag`
+- `--output-dir` — destination for pool-ordering outputs
+
+**Outputs:**
+- `synthetic_gene_pool.csv` — one pooled oligo per target
+- `synthetic_gene_pool_primers.csv` — common forward/reverse lift-out primers to order once
+- `synthetic_gene_pool_ordering.tsv` — copy/paste-ready ordering list containing all pool oligos and the common primers
+- `synthetic_gene_pool_instructions.txt` — brief workflow guidance
+
+Protein inputs are automatically codon-optimized for E. coli. The pooled oligos are kept short by including only the shared anneal handles, while the reusable common primers contribute the full T7/cell-free 5' and 3' payload. The common primers must stay below 100 bp; the workflow fails if the configured constant/tag payload would exceed that limit.
+
+Example:
+
+```bash
+uht-tooling design-synthetic-gene-pool \
+  --sequence-fasta data/synthetic_genes/targets.fasta \
+  --input-type protein \
+  --tag-mode n_his \
+  --output-dir results/synthetic_gene_pool/
+```
 
 ### Nextera XT primer design
 

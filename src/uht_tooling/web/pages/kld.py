@@ -22,6 +22,24 @@ async def render() -> None:
         "the mutation at the 5\u2032 end; reverse primers bind upstream to "
         "re-amplify the full plasmid.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow designs **KLD inverse-PCR primers** for introducing mutations into a plasmid with a two-primer strategy.
+
+- For each mutation, the tool emits **one forward primer** and **one reverse primer**.
+- The forward primer places the mutation at its **5' end** and extends downstream into the template-binding region.
+- The reverse primer is designed immediately upstream so the pair can re-amplify the **entire plasmid**.
+- Binding-region **Tm**, **GC%**, and **length** are reported for each primer, and the design aims to keep the two primer Tms closely matched.
+- The same mutation syntax as SLIM is supported, including substitutions, deletions, insertions, and degenerate library codons.
+
+Compared with SLIM, this is a simpler **two-primer** workflow and is typically better suited to **single-mutation** jobs.
+
+Outputs:
+
+- `KLD_primers.csv`: forward/reverse primer pairs plus binding metrics and notes
+                """
+            ).classes("apple-markdown")
         gene = apple_textarea(
             "Gene sequence",
             "Paste the target gene coding sequence...",

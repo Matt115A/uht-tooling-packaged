@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uht-tooling"
-version = "0.5.10"
+version = "0.6.0"
 description = "Tooling for ultra-high throughput screening workflows."
 readme = "README.md"
 requires-python = "==3.10.*"
@@ -12,6 +12,7 @@ license = "MIT"
 authors = [{ name = "Matt115A" }]
 dependencies = [
     "biopython==1.85",
+    "dnachisel==3.2.16",
     "fuzzywuzzy==0.18.0",
     "matplotlib==3.10.7",
     "pandas==2.3.3",

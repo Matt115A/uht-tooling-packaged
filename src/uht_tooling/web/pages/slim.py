@@ -21,6 +21,28 @@ async def render() -> None:
         "Design paired short/long primers to introduce targeted mutations by "
         "Sequence-Ligation Independent Mutagenesis.",
     ):
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow designs **SLIM mutagenesis primers** for targeted substitutions, deletions, insertions, and degenerate-codon libraries.
+
+- For each mutation, the tool produces the standard **four-primer SLIM set**: long forward, short reverse, long reverse, and short forward.
+- It validates each mutation against the supplied gene sequence before designing primers.
+- Degenerate codons such as **`NNK`** or **`NNS`** are supported directly, so the same workflow can be used for site-saturation or focused library construction.
+- Reverse primers are written with the correct **IUPAC reverse complements** for degenerate bases.
+
+Mutation examples:
+
+- `A123G` for a substitution
+- `T241Del` for a deletion
+- `T241TS` for an insertion
+- `A123:NNK` for a degenerate library codon
+
+Outputs:
+
+- `SLIM_primers.csv`: four primers per mutation
+                """
+            ).classes("apple-markdown")
         gene = apple_textarea(
             "Gene sequence",
             "Paste the target gene coding sequence...",

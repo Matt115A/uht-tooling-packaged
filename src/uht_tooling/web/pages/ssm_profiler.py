@@ -27,23 +27,25 @@ async def render() -> None:
         "distributions, compare them to degenerate-codon expectations, and assess off-target "
         "mutation elsewhere in the gene of interest.",
     ):
-        ui.markdown(
-            """
-            **How to use**
+        with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
+            ui.markdown(
+                """
+This workflow profiles **site-saturation mutagenesis (SSM) libraries** at user-specified codons from long-read sequencing data.
 
-            - Upload one or more FASTQ files from your sequencing run. Each FASTQ is profiled independently.
-            - Provide the ROI as the coding sequence for the diversified gene region, from start codon through stop codon.
-            - Number target sites in amino-acid coordinates relative to that ROI CDS. Example: if the mutated codon encodes residue 45 in your reference protein, enter `45`.
-            - Optionally provide the degenerate codon scheme used at each site as `position:scheme`, for example `45:NNK`.
+- You define the **ROI coding sequence**, the full **plasmid**, and the amino-acid positions that were intentionally diversified.
+- Optionally, you can provide the **degenerate codon scheme** used at each site, such as `45:NNK`.
+- The tool reports **observed amino-acid distributions** at each target site and, when schemes are supplied, compares them with the **expected distributions** from the degenerate code.
+- Target-site mutational load is computed using only the codons you specify.
+- Mismatches elsewhere in the ROI are treated as **off-target signal** and compared against plasmid background outside the ROI.
 
-            **What the tool reports**
+Outputs focus on:
 
-            - Amino-acid distributions at each target site
-            - Target-only mutational load across the specified codons
-            - Observed vs theoretical amino-acid distributions when schemes are supplied
-            - Evidence for off-target mutation elsewhere in the ROI, benchmarked against plasmid background
-            """
-        ).classes("apple-card-subtitle w-full")
+- per-site amino-acid distributions
+- target-only mutational-load summaries
+- observed-vs-expected comparisons for supplied degenerate schemes
+- off-target mismatch rates elsewhere in the ROI
+                """
+            ).classes("apple-markdown")
 
         fastq_paths: List[str] = []
         region_path: dict[str, Optional[str]] = {"value": None}
