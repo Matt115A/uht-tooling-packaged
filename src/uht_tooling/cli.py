@@ -429,6 +429,11 @@ def design_synthetic_gene_pool_command(
         "--tag-mode",
         help="One of: none, n_his, c_his, n_his_flag, c_his_flag.",
     ),
+    include_pullout_primers: bool = typer.Option(
+        False,
+        "--include-pullout-primers/--no-include-pullout-primers",
+        help="Add one gene-specific reverse pullout primer per design; each ordered gene carries a deterministic unique index just upstream of the terminator, and the pullout primer binds that built-in region after whole-pool amplification.",
+    ),
     log_path: Optional[Path] = typer.Option(
         None,
         "--log-path",
@@ -445,6 +450,7 @@ def design_synthetic_gene_pool_command(
         output_dir=output_dir,
         input_type=input_type,
         tag_mode=tag_mode,
+        include_pullout_primers=include_pullout_primers,
         log_path=log_path,
         config=config,
     )

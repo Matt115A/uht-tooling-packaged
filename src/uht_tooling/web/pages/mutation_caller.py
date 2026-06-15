@@ -29,6 +29,10 @@ async def render() -> None:
         "Extract coding regions bounded by user-defined flanks, align to the "
         "template, and report amino-acid substitutions.",
     ):
+        ui.image("/uht-static/animations/mutation_caller.gif").style(
+            "width: 100%; border-radius: 12px; border: 1px solid var(--border);"
+            " box-shadow: var(--shadow-md); margin-bottom: 8px; display: block;"
+        )
         with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
             ui.markdown(
                 """

@@ -242,15 +242,16 @@ Design a pooled ordering set for E. coli T7 cell-free protein synthesis where ea
 - `--sequence-fasta` — FASTA containing one or more GOIs as DNA or protein
 - `--input-type` — `auto`, `dna`, or `protein`
 - `--tag-mode` — `none`, `n_his`, `c_his`, `n_his_flag`, or `c_his_flag`
+- `--include-pullout-primers` — include deterministic gene-specific pullout reverse primers; each ordered design will carry a built-in unique index just upstream of the terminator
 - `--output-dir` — destination for pool-ordering outputs
 
 **Outputs:**
 - `synthetic_gene_pool.csv` — one pooled oligo per target
-- `synthetic_gene_pool_primers.csv` — common forward/reverse lift-out primers to order once
+- `synthetic_gene_pool_primers.csv` — common forward/reverse lift-out primers, plus optional gene-specific pullout reverse primers
 - `synthetic_gene_pool_ordering.tsv` — copy/paste-ready ordering list containing all pool oligos and the common primers
 - `synthetic_gene_pool_instructions.txt` — brief workflow guidance
 
-Protein inputs are automatically codon-optimized for E. coli. The pooled oligos are kept short by including only the shared anneal handles, while the reusable common primers contribute the full T7/cell-free 5' and 3' payload. The common primers must stay below 100 bp; the workflow fails if the configured constant/tag payload would exceed that limit.
+Protein inputs are automatically codon-optimized for E. coli. The pooled oligos are kept short by including only the shared anneal handles, while the reusable common primers contribute the full T7/cell-free 5' and 3' payload. In pullout mode, each ordered design also carries a deterministic built-in unique index just upstream of the terminator; after whole-pool amplification with `POOL_CONST_F` and `POOL_CONST_R`, use `POOL_CONST_F` plus the matching `*_PULLOUT_R` primer to selectively recover one CFPS-ready construct. The common primers must stay below 100 bp; the workflow fails if the configured constant/tag payload would exceed that limit.
 
 Example:
 
@@ -259,6 +260,7 @@ uht-tooling design-synthetic-gene-pool \
   --sequence-fasta data/synthetic_genes/targets.fasta \
   --input-type protein \
   --tag-mode n_his \
+  --include-pullout-primers \
   --output-dir results/synthetic_gene_pool/
 ```
 

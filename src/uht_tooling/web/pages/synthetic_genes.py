@@ -23,15 +23,25 @@ async def render() -> None:
         "Synthetic Genes",
         "Create a pooled synthetic-gene ordering list for E. coli T7 cell-free protein synthesis, with shared lift-out primers that add the final 5' and 3' sequence features.",
     ):
+        ui.image("/uht-static/animations/synthetic_gene_pool_workflow.gif").style(
+            "width: 100%; border-radius: 12px; border: 1px solid var(--border);"
+            " box-shadow: var(--shadow-md); margin-bottom: 8px; display: block;"
+        )
         with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
             ui.markdown(
                 """
 This workflow designs a pooled ordering set for **E. coli T7 cell-free protein synthesis**.
 
 - Each input target becomes **one pooled ordering oligo**.
-- That pooled oligo carries only the **shared anneal handles** plus the target coding region, so the ordered pool oligos stay shorter than a full expression cassette.
+- That pooled oligo carries the **shared anneal handles** plus the target coding region, so the ordered pool oligos stay shorter than a full expression cassette.
 - The tool also emits **one reusable primer pair**: `POOL_CONST_F` and `POOL_CONST_R`.
 - During lift-out PCR, those common primers add the final **5' constant region**, **3' constant region**, and any selected **N-terminal or C-terminal tag**.
+- Optional **gene-specific pullout primers** can also be emitted. In that mode, each design gets a deterministic balanced index built into the ordered DNA just upstream of the terminator, and a matching reverse primer binds that unique region to selectively recover the design after whole-pool amplification.
+- Intended pullout workflow:
+  1. Order the pooled oligos, plus `POOL_CONST_F` and `POOL_CONST_R`.
+  2. Use `POOL_CONST_F` + `POOL_CONST_R` to amplify the entire pool into a CFPS-ready library.
+  3. Use `POOL_CONST_F` + the matching `*_PULLOUT_R` primer to selectively recover one design from that amplified pool.
+  4. The recovered product already contains promoter, gene, unique index, and terminator, so it can be used directly for CFPS.
 - For **protein inputs**, sequences are automatically **codon-optimized for E. coli** before the pooled oligos are written.
 - Protein residue **`X`** is translated to **`NNN`** in the pooled oligo output so you can preserve a randomized codon at that position.
 - The common primers must remain **below 100 bp**. If the configured constant regions plus tag payload are too long, the workflow stops with an error instead of producing an unusable ordering design.
@@ -94,6 +104,12 @@ Outputs:
                 label="Tag mode",
             ).classes("apple-field flex-1")
             tag_mode.props("outlined dense")
+        include_pullout_primers = ui.checkbox(
+            "Add deterministic per-gene pullout primers for selective PCR recovery"
+        ).classes("w-full")
+        ui.label(
+            "Pullout mode: first amplify the full pool with POOL_CONST_F/POOL_CONST_R, then use POOL_CONST_F plus a matching *_PULLOUT_R primer to recover one CFPS-ready design."
+        ).classes("apple-card-subtitle w-full")
 
         ui.label(
             "Protein inputs are automatically codon-optimized for E. coli because this tool is specialized for T7-driven cell-free expression."
@@ -114,6 +130,7 @@ Outputs:
                 sequence.value,
                 input_type.value,
                 tag_mode.value,
+                include_pullout_primers.value,
             )
 
             progress.set_visibility(False)

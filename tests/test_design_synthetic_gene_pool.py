@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 
+from Bio.Seq import Seq
 from typer.testing import CliRunner
 
 from uht_tooling.workflows import design_synthetic_gene_pool
@@ -163,3 +164,67 @@ def test_design_synthetic_gene_pool_enforces_common_primer_length_limit(tmp_path
         assert "99 bp ordering limit" in str(exc)
     else:
         raise AssertionError("Expected a primer-length limit error.")
+
+
+def test_design_synthetic_gene_pool_pullout_primers_are_deterministic(tmp_path, monkeypatch):
+    install_fake_dnachisel(monkeypatch)
+
+    input_fasta_a = tmp_path / "targets_a.fasta"
+    input_fasta_b = tmp_path / "targets_b.fasta"
+    write_fasta_records(input_fasta_a, [("gene_a", "AK"), ("gene_b", "MAK")])
+    write_fasta_records(input_fasta_b, [("gene_x", "MK"), ("gene_y", "AAK")])
+
+    output_dir_a = tmp_path / "out_a"
+    output_dir_b = tmp_path / "out_b"
+
+    design_synthetic_gene_pool.run_design_synthetic_gene_pool(
+        sequence_fasta=input_fasta_a,
+        output_dir=output_dir_a,
+        input_type="protein",
+        tag_mode="none",
+        include_pullout_primers=True,
+        config=base_config(),
+    )
+    design_synthetic_gene_pool.run_design_synthetic_gene_pool(
+        sequence_fasta=input_fasta_b,
+        output_dir=output_dir_b,
+        input_type="protein",
+        tag_mode="none",
+        include_pullout_primers=True,
+        config=base_config(),
+    )
+
+    pool_rows_a = list(csv.DictReader((output_dir_a / "synthetic_gene_pool.csv").open()))
+    pool_rows_b = list(csv.DictReader((output_dir_b / "synthetic_gene_pool.csv").open()))
+    assert [row["pullout_index"] for row in pool_rows_a] == ["AACAACAACC", "ACATAACACC"]
+    assert [row["pullout_index"] for row in pool_rows_b] == ["AACAACAACC", "ACATAACACC"]
+    assert pool_rows_a[0]["sequence_5to3"].endswith("TAAAACAACAACCGCGTTTTTTTTTGGGGAAAA")
+    assert pool_rows_a[1]["sequence_5to3"].endswith("TAAACATAACACCGCGTTTTTTTTTGGGGAAAA")
+
+    primer_rows = list(csv.DictReader((output_dir_a / "synthetic_gene_pool_primers.csv").open()))
+    common_names = [row["primer_name"] for row in primer_rows[:2]]
+    assert common_names == ["POOL_CONST_F", "POOL_CONST_R"]
+    pullout_rows = [row for row in primer_rows if row["primer_role"] == "gene_specific_pullout"]
+    assert [row["primer_name"] for row in pullout_rows] == ["gene_a_PULLOUT_R", "gene_b_PULLOUT_R"]
+    assert [row["pullout_index"] for row in pullout_rows] == ["AACAACAACC", "ACATAACACC"]
+    assert all(row["adds_sequence"] == "" for row in pullout_rows)
+    assert pullout_rows[0]["anneal_sequence"] == str(Seq("AACAACAACCGCGTTTTTTTTTGGGGAAAA").reverse_complement())
+    assert pullout_rows[1]["anneal_sequence"] == str(Seq("ACATAACACCGCGTTTTTTTTTGGGGAAAA").reverse_complement())
+
+    ordering_lines = (output_dir_a / "synthetic_gene_pool_ordering.tsv").read_text().splitlines()
+    assert any("pullout_primer" in line for line in ordering_lines)
+
+
+def test_pullout_index_table_metadata_is_packaged():
+    table = design_synthetic_gene_pool._load_pullout_index_table()
+
+    assert table["table_name"] == "cfps_pullout_indexes"
+    assert table["entry_count"] >= 100
+    assert table["selection_constraints"]["length_nt"] == 10
+    assert table["selection_constraints"]["min_pairwise_hamming_distance"] == 5
+    assert table["table_version"] == "2026-06-15-v2"
+
+    first = table["entries"][0]
+    assert first["sequence"] == "AACAACAACC"
+    assert 40.0 <= float(first["gc_percent"]) <= 60.0
+    assert int(first["min_hamming_distance_to_table"]) >= 5

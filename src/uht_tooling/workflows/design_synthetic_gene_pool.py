@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import csv
+import json
+from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -29,10 +32,12 @@ from uht_tooling.workflows.design_gene_oligos import (
     _resolve_string,
     _setup_logger,
     calc_gc_content,
+    calc_tm,
 )
 
 CELL_FREE_TARGET_HOST = "e_coli"
 MAX_COMMON_PRIMER_LENGTH = 99
+PULLOUT_INDEX_LENGTH = 10
 
 
 def _normalize_pool_protein_sequence(seq: str, target_name: str, logger) -> Tuple[str, List[str], bool, bool]:
@@ -86,6 +91,18 @@ def _codon_optimize_protein_with_random_sites(
     return "".join(pieces)
 
 
+def _rewrite_pullout_three_prime_warnings(warnings: List[str]) -> List[str]:
+    rewritten: List[str] = []
+    for warning in warnings:
+        if warning == "Added terminal stop codon on reusable 3' constant oligo.":
+            rewritten.append("Added terminal stop codon on pooled ordering oligo upstream of the unique pullout index.")
+        elif warning == "Moved terminal stop codon onto reusable 3' constant oligo.":
+            rewritten.append("Placed terminal stop codon on pooled ordering oligo upstream of the unique pullout index.")
+        else:
+            rewritten.append(warning)
+    return rewritten
+
+
 def _build_pool_handles(
     constant_5prime: str,
     constant_3prime: str,
@@ -107,11 +124,43 @@ def _build_pool_handles(
     return desired_5, desired_3, handle_5, handle_3, left_tm, left_gc, right_tm, right_gc
 
 
+def _build_pullout_three_prime_components(
+    constant_3prime: str,
+    stop_codon: str,
+    tag_mode: str,
+    tag_seq: str,
+) -> Tuple[str, str, str, float, float]:
+    three_prime_prefix = stop_codon
+    if tag_mode.startswith("c_") and tag_seq:
+        three_prime_prefix = tag_seq + three_prime_prefix
+    handle_len, handle_tm, handle_gc = _pick_edge_overlap(constant_3prime, use_tail=False)
+    terminator_handle = constant_3prime[:handle_len]
+    return three_prime_prefix, constant_3prime, terminator_handle, handle_tm, handle_gc
+
+
+@lru_cache(maxsize=1)
+def _load_pullout_index_table() -> Dict[str, object]:
+    table_path = resources.files("uht_tooling.data").joinpath("cfps_pullout_indexes.json")
+    with table_path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _assign_pullout_indexes(count: int) -> List[str]:
+    table = _load_pullout_index_table()
+    indexes = [str(entry["sequence"]) for entry in table["entries"]]
+    if count > len(indexes):
+        raise ValueError(
+            f"Requested {count} pullout indexes, but only {len(indexes)} precomputed deterministic indexes are available in table version {table['table_version']}."
+        )
+    return indexes[:count]
+
+
 def run_design_synthetic_gene_pool(
     sequence_fasta: Path,
     output_dir: Path,
     input_type: str = "auto",
     tag_mode: str = "none",
+    include_pullout_primers: bool = False,
     log_path: Optional[Path] = None,
     logger=None,
     config: Optional[Dict[str, object]] = None,
@@ -129,6 +178,7 @@ def run_design_synthetic_gene_pool(
     try:
         records = _read_fasta_records(Path(sequence_fasta))
         gene_cfg = _load_gene_oligo_config(config)
+        pullout_index_table = _load_pullout_index_table() if include_pullout_primers else None
         constant_5prime = _resolve_string(gene_cfg, "constant_5prime_dna", DEFAULT_CONSTANT_5PRIME_DNA)
         constant_3prime = _resolve_string(gene_cfg, "constant_3prime_dna", DEFAULT_CONSTANT_3PRIME_DNA)
         stop_codon = _resolve_string(gene_cfg, "stop_codon", DEFAULT_STOP_CODON)
@@ -142,10 +192,30 @@ def run_design_synthetic_gene_pool(
             tag_mode=tag_mode,
             tag_seq=tag_seq,
         )
+        pullout_three_prime_prefix = ""
+        pullout_terminator = constant_3prime
+        pullout_handle_3 = handle_3
+        pullout_right_tm = right_tm
+        pullout_right_gc = right_gc
+        if include_pullout_primers:
+            (
+                pullout_three_prime_prefix,
+                pullout_terminator,
+                pullout_handle_3,
+                pullout_right_tm,
+                pullout_right_gc,
+            ) = _build_pullout_three_prime_components(
+                constant_3prime=constant_3prime,
+                stop_codon=stop_codon,
+                tag_mode=tag_mode,
+                tag_seq=tag_seq,
+            )
+
+        pullout_indexes = _assign_pullout_indexes(len(records)) if include_pullout_primers else []
 
         pool_rows: List[Dict[str, object]] = []
         ordering_rows: List[Dict[str, object]] = []
-        for record in records:
+        for idx, record in enumerate(records):
             cleaned = _clean_sequence_text(record.raw_sequence)
             resolved_input_type = input_type if input_type != "auto" else ("dna" if set(cleaned) <= {"A", "C", "G", "T"} else "protein")
             if resolved_input_type == "protein":
@@ -177,9 +247,14 @@ def run_design_synthetic_gene_pool(
                     target_host=CELL_FREE_TARGET_HOST,
                     logger=managed_logger,
                 )
+            if include_pullout_primers:
+                warnings = _rewrite_pullout_three_prime_warnings(warnings)
             pool_seq = handle_5 + coding_seq + handle_3
             pool_name = f"{record.name}_POOL"
             warning_text = " | ".join(warnings)
+            pullout_index = pullout_indexes[idx] if include_pullout_primers else ""
+            if include_pullout_primers:
+                pool_seq = handle_5 + coding_seq + pullout_three_prime_prefix + pullout_index + pullout_handle_3
             pool_rows.append(
                 {
                     "target_name": record.name,
@@ -187,6 +262,7 @@ def run_design_synthetic_gene_pool(
                     "pool_oligo_name": pool_name,
                     "sequence_5to3": pool_seq,
                     "pool_oligo_length": len(pool_seq),
+                    "pullout_index": pullout_index,
                     "added_start_codon": "yes" if added_start else "no",
                     "added_stop_codon": "yes" if added_stop else "no",
                     "warnings": warning_text,
@@ -203,7 +279,7 @@ def run_design_synthetic_gene_pool(
             )
 
         forward_primer = desired_5
-        reverse_primer = str(Seq(desired_3).reverse_complement())
+        reverse_primer = str(Seq((pullout_terminator if include_pullout_primers else desired_3)).reverse_complement())
         if len(forward_primer) > MAX_COMMON_PRIMER_LENGTH or len(reverse_primer) > MAX_COMMON_PRIMER_LENGTH:
             raise ValueError(
                 "The common primer pair exceeds the 99 bp ordering limit. Shorten the constant/tag payload for this cell-free design."
@@ -212,6 +288,7 @@ def run_design_synthetic_gene_pool(
             {
                 "primer_name": "POOL_CONST_F",
                 "sequence_5to3": forward_primer,
+                "primer_role": "common_liftout",
                 "orientation": "forward",
                 "adds_sequence": desired_5,
                 "anneal_sequence": handle_5,
@@ -222,12 +299,13 @@ def run_design_synthetic_gene_pool(
             {
                 "primer_name": "POOL_CONST_R",
                 "sequence_5to3": reverse_primer,
+                "primer_role": "common_liftout",
                 "orientation": "reverse",
-                "adds_sequence": desired_3,
-                "anneal_sequence": str(Seq(handle_3).reverse_complement()),
-                "anneal_length_nt": len(handle_3),
-                "anneal_tm_c": f"{right_tm:.2f}",
-                "anneal_gc_percent": f"{right_gc:.2f}",
+                "adds_sequence": pullout_terminator if include_pullout_primers else desired_3,
+                "anneal_sequence": str(Seq((pullout_handle_3 if include_pullout_primers else handle_3)).reverse_complement()),
+                "anneal_length_nt": len(pullout_handle_3 if include_pullout_primers else handle_3),
+                "anneal_tm_c": f"{(pullout_right_tm if include_pullout_primers else right_tm):.2f}",
+                "anneal_gc_percent": f"{(pullout_right_gc if include_pullout_primers else right_gc):.2f}",
             },
         ]
         for primer in common_primers:
@@ -240,6 +318,42 @@ def run_design_synthetic_gene_pool(
                     "order_scope": "order_once",
                 }
             )
+
+        pullout_primers: List[Dict[str, object]] = []
+        if include_pullout_primers:
+            terminator_tail = pullout_terminator[len(pullout_handle_3) :]
+            for row in pool_rows:
+                pullout_index = str(row["pullout_index"])
+                pullout_binding_region = pullout_index + pullout_handle_3
+                pullout_primer = str(Seq(terminator_tail + pullout_binding_region).reverse_complement())
+                if len(pullout_primer) > MAX_COMMON_PRIMER_LENGTH:
+                    raise ValueError(
+                        "The gene-specific pullout reverse primers exceed the 99 bp ordering limit. Shorten the constant/tag payload for this cell-free design."
+                    )
+                pullout_name = f"{row['target_name']}_PULLOUT_R"
+                pullout_primers.append(
+                    {
+                        "primer_name": pullout_name,
+                        "sequence_5to3": pullout_primer,
+                        "primer_role": "gene_specific_pullout",
+                        "orientation": "reverse",
+                        "adds_sequence": terminator_tail,
+                        "anneal_sequence": str(Seq(pullout_binding_region).reverse_complement()),
+                        "anneal_length_nt": len(pullout_binding_region),
+                        "anneal_tm_c": f"{calc_tm(pullout_binding_region):.2f}",
+                        "anneal_gc_percent": f"{calc_gc_content(pullout_binding_region):.2f}",
+                        "pullout_index": pullout_index,
+                    }
+                )
+                ordering_rows.append(
+                    {
+                        "name": pullout_name,
+                        "sequence": pullout_primer,
+                        "category": "pullout_primer",
+                        "target_name": row["target_name"],
+                        "order_scope": "order_once",
+                    }
+                )
 
         pool_csv = output_dir / "synthetic_gene_pool.csv"
         primer_csv = output_dir / "synthetic_gene_pool_primers.csv"
@@ -255,6 +369,7 @@ def run_design_synthetic_gene_pool(
                     "pool_oligo_name",
                     "sequence_5to3",
                     "pool_oligo_length",
+                    "pullout_index",
                     "added_start_codon",
                     "added_stop_codon",
                     "warnings",
@@ -269,8 +384,10 @@ def run_design_synthetic_gene_pool(
                 fieldnames=[
                     "primer_name",
                     "sequence_5to3",
+                    "primer_role",
                     "orientation",
                     "adds_sequence",
+                    "pullout_index",
                     "anneal_sequence",
                     "anneal_length_nt",
                     "anneal_tm_c",
@@ -279,6 +396,7 @@ def run_design_synthetic_gene_pool(
             )
             writer.writeheader()
             writer.writerows(common_primers)
+            writer.writerows(pullout_primers)
 
         with ordering_tsv.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle, delimiter="\t")
@@ -294,12 +412,29 @@ def run_design_synthetic_gene_pool(
                     "This tool is specialized for E. coli T7 cell-free protein synthesis.",
                     "1. Order all pool oligos as the pooled synthesis set.",
                     "2. Order POOL_CONST_F and POOL_CONST_R once for the entire pool.",
-                    "3. Amplify the pool with the common primer pair to lift out each gene while adding the final 5' and 3' sequences.",
-                    "4. The forward primer adds the constant 5' region plus any N-terminal tag; the reverse primer adds any C-terminal tag plus stop codon and constant 3' region.",
-                    f"5. Forward primer anneal handle length: {len(handle_5)} nt. Reverse primer anneal handle length: {len(handle_3)} nt.",
+                    "3. Amplify the pool with the common primer pair to generate the full pooled CFPS library.",
+                    "4. The forward primer adds the constant 5' region plus any N-terminal tag; the reverse primer completes the shared 3' payload for the pooled CFPS library.",
+                    (
+                        f"5. Forward primer anneal handle length: {len(handle_5)} nt. Reverse primer anneal handle length: "
+                        f"{len(pullout_handle_3 if include_pullout_primers else handle_3)} nt."
+                    ),
                     f"6. Common primer lengths: F={len(forward_primer)} nt, R={len(reverse_primer)} nt (must stay below 100 bp).",
                     "7. Ordered pool oligos are kept short by including only the shared anneal handles, not the full promoter/terminator payload.",
                 ]
+                + (
+                    [
+                        "8. Gene-specific pullout mode is enabled: each ordered pool oligo includes a deterministic unique index between the stop/c-tag segment and the terminator.",
+                        "9. First amplify the full pooled library with POOL_CONST_F and POOL_CONST_R.",
+                        "10. Then use POOL_CONST_F with the matching *_PULLOUT_R primer to selectively recover one variant from that full pooled CFPS library.",
+                        (
+                            "11. The gene-specific reverse primer binds the built-in "
+                            f"{PULLOUT_INDEX_LENGTH} nt index plus the adjacent terminator handle; it does not introduce the unique index."
+                        ),
+                        f"12. Pullout index table version: {pullout_index_table['table_version']}.",
+                    ]
+                    if include_pullout_primers
+                    else []
+                )
             )
             + "\n",
             encoding="utf-8",

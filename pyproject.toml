@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uht-tooling"
-version = "0.6.0"
+version = "0.7.0"
 description = "Tooling for ultra-high throughput screening workflows."
 readme = "README.md"
 requires-python = "==3.10.*"
@@ -41,3 +41,6 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+uht_tooling = ["data/*.json", "web/static/**/*"]

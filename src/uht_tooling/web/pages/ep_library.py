@@ -27,6 +27,10 @@ async def render() -> None:
         "identify commonly mutated sites in a plasmid pool and their relative "
         "abundances, and compare variant enrichments between DNA pools.",
     ):
+        ui.image("/uht-static/animations/ep_library_profiler.gif").style(
+            "width: 100%; border-radius: 12px; border: 1px solid var(--border);"
+            " box-shadow: var(--shadow-md); margin-bottom: 8px; display: block;"
+        )
         with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
             ui.markdown(
                 """

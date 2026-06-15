@@ -27,6 +27,10 @@ async def render() -> None:
         "distributions, compare them to degenerate-codon expectations, and assess off-target "
         "mutation elsewhere in the gene of interest.",
     ):
+        ui.image("/uht-static/animations/ssm_profiler.gif").style(
+            "width: 100%; border-radius: 12px; border: 1px solid var(--border);"
+            " box-shadow: var(--shadow-md); margin-bottom: 8px; display: block;"
+        )
         with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
             ui.markdown(
                 """

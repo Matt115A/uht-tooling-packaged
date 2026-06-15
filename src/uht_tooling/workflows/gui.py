@@ -420,6 +420,7 @@ def run_gui_design_synthetic_gene_pool(
     sequence_content: str,
     input_type: str,
     tag_mode: str,
+    include_pullout_primers: bool,
 ) -> Tuple[str, Optional[str]]:
     work_dir: Optional[Path] = None
     output_dir: Optional[Path] = None
@@ -439,6 +440,7 @@ def run_gui_design_synthetic_gene_pool(
             output_dir=output_dir,
             input_type=input_type,
             tag_mode=tag_mode,
+            include_pullout_primers=include_pullout_primers,
         )
 
         pool_csv = Path(outputs["pool_csv"])
@@ -448,7 +450,7 @@ def run_gui_design_synthetic_gene_pool(
                 "**Pool oligo preview**",
                 _preview_csv(pool_csv),
                 "",
-                "**Common primer preview**",
+                "**Primer preview**",
                 _preview_csv(primer_csv),
                 "",
                 f"Ordering list: `{Path(outputs['ordering_tsv']).name}`",

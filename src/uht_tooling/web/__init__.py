@@ -9,9 +9,13 @@ import secrets
 import socket
 from typing import Optional
 
-from nicegui import ui
+from pathlib import Path
+
+from nicegui import app as _nicegui_app, ui
 
 from uht_tooling.web.app import register_routes
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 _LOGGER = logging.getLogger("uht_tooling.web")
 
@@ -46,6 +50,8 @@ def launch_web_gui(
     """Start the NiceGUI-based Apple-style GUI."""
     resolved_port = _find_port(host, port)
     _LOGGER.info("Starting uht-tooling web GUI on http://%s:%s", host, resolved_port)
+    if _STATIC_DIR.exists():
+        _nicegui_app.add_static_files("/uht-static", str(_STATIC_DIR))
     register_routes()
     resolved_secret = storage_secret or os.getenv("UHT_STORAGE_SECRET")
     if not resolved_secret:
