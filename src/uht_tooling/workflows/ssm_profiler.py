@@ -156,14 +156,17 @@ def theoretical_aa_distribution(scheme: str) -> Dict[str, float]:
     return {aa: counts[aa] / total for aa in sorted(counts)}
 
 
-def _aligned_base_map(read: pysam.AlignedSegment, ref_len: int) -> Dict[int, str]:
+def _aligned_base_map(read: pysam.AlignedSegment, ref_len: int, min_base_qual: int = 0) -> Dict[int, str]:
     mapping: Dict[int, str] = {}
     if read.is_unmapped or read.query_sequence is None:
         return mapping
+    qualities = read.query_qualities
     for read_pos, ref_pos in read.get_aligned_pairs(matches_only=False):
         if read_pos is None or ref_pos is None:
             continue
         if not 0 <= ref_pos < ref_len:
+            continue
+        if min_base_qual > 0 and qualities is not None and qualities[read_pos] < min_base_qual:
             continue
         base = read.query_sequence[read_pos].upper()
         if base in {"A", "C", "G", "T"}:
@@ -176,6 +179,7 @@ def collect_target_site_distributions(
     hit_seq: str,
     protein_seq: str,
     target_sites: Sequence[int],
+    min_base_qual: int = 0,
 ) -> Dict[str, object]:
     site_results: Dict[int, Dict[str, object]] = {}
     target_positions = set()
@@ -198,7 +202,7 @@ def collect_target_site_distributions(
 
     with pysam.AlignmentFile(str(sam_hit), "r") as samfile:
         for read in samfile.fetch():
-            base_map = _aligned_base_map(read, len(hit_seq))
+            base_map = _aligned_base_map(read, len(hit_seq), min_base_qual)
             per_read_mutations = 0
             covered_all_sites = True
 
@@ -483,6 +487,7 @@ def process_single_fastq(
     base_results_dir: Path,
     target_sites: Sequence[int],
     scheme_map: Dict[int, str],
+    min_base_qual: int = 0,
 ) -> Dict[str, object]:
     _ensure_workspace(base_work_dir, "clean work directories")
     _ensure_workspace(base_results_dir, "clean result directories")
@@ -524,7 +529,7 @@ def process_single_fastq(
     sam_plasmid = Path(run_minimap2(str(fastq_path), str(plasmid_fasta), "ssm_plasmid_alignment", str(work_dir)))
 
     hit_info = compute_mismatch_stats_sam(str(sam_hit), {hit_id: hit_seq})[hit_id]
-    bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(
+    bg_mis, bg_cov, bg_reads, _bg_del_rate = calculate_background_from_plasmid(
         str(sam_plasmid),
         plasmid_seq,
         roi_location["start"],
@@ -532,7 +537,9 @@ def process_single_fastq(
     )
     bg_rate = (bg_mis / bg_cov) if bg_cov else 0.0
 
-    target_data = collect_target_site_distributions(sam_hit, hit_seq, protein_seq, target_sites)
+    target_data = collect_target_site_distributions(
+        sam_hit, hit_seq, protein_seq, target_sites, min_base_qual
+    )
     site_summary_rows, distribution_rows = build_site_summary_rows(target_data["sites"], scheme_map)
     non_target_summary = summarize_non_target_roi(hit_info, bg_mis, bg_cov, target_data["target_nt_positions"])
 
@@ -670,6 +677,7 @@ def run_ssm_profiler(
     target_sites: Sequence[int],
     scheme_map: Optional[Dict[int, str]] = None,
     work_dir: Optional[Path] = None,
+    min_base_qual: int = 0,
 ) -> Dict[str, object]:
     fastq_paths = [Path(path) for path in fastq_paths]
     if not fastq_paths:
@@ -718,6 +726,7 @@ def run_ssm_profiler(
             output_dir,
             target_sites,
             scheme_map,
+            min_base_qual,
         )
         sample_results.append(result)
         with master_summary_path.open("a", encoding="utf-8") as handle:
