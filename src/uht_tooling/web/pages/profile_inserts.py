@@ -28,6 +28,10 @@ async def render() -> None:
         "Characterise inserts demarcated by upstream/downstream probes, extract "
         "sequences, and produce QC plots plus summary tables.",
     ):
+        ui.image("/uht-static/animations/profile_inserts.gif").style(
+            "width: 100%; border-radius: 12px; border: 1px solid var(--border);"
+            " box-shadow: var(--shadow-md); margin-bottom: 8px; display: block;"
+        )
         with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
             ui.markdown(
                 """

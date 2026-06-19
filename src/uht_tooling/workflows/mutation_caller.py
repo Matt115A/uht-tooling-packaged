@@ -2,7 +2,6 @@ import argparse
 import gzip
 import logging
 import os
-import re
 import subprocess
 import tempfile
 from collections import Counter, defaultdict
@@ -18,43 +17,117 @@ from Bio import AlignIO, SeqIO
 from Bio.Align.Applications import MafftCommandline
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+from fuzzywuzzy import fuzz
 from scipy.stats import fisher_exact, gaussian_kde
 from tqdm import tqdm
+
+DEFAULT_FLANK_MIN_RATIO = 80
 
 
 def reverse_complement(seq: str) -> str:
     return seq.translate(str.maketrans("ACGTacgt", "TGCAtgca"))[::-1]
 
 
-def build_flank_pattern(flanks_csv: Path) -> tuple[re.Pattern, int, int]:
+def parse_flank_spec(flanks_csv: Path) -> tuple[str, str, int, int]:
     df = pd.read_csv(flanks_csv)
-    gene_start = df.loc[0, "gene_flanks"]
-    gene_end = df.loc[1, "gene_flanks"]
+    gene_start = str(df.loc[0, "gene_flanks"]).upper()
+    gene_end = str(df.loc[1, "gene_flanks"]).upper()
     gene_min = int(df.loc[0, "gene_min_max"])
     gene_max = int(df.loc[1, "gene_min_max"])
-    pattern = re.compile(
-        rf"{gene_start}([ACGTNacgtn]{{{gene_min},{gene_max}}}){gene_end}",
-        re.IGNORECASE,
-    )
-    return pattern, gene_min, gene_max
+    return gene_start, gene_end, gene_min, gene_max
 
 
-def extract_gene(seq: str, pattern: re.Pattern, gene_min: int, gene_max: int) -> Optional[str]:
-    match = pattern.search(seq)
-    if match:
-        gene = match.group(1)
-        if gene_min <= len(gene) <= gene_max:
-            return gene
-    match = pattern.search(reverse_complement(seq))
-    if match:
-        gene = match.group(1)
-        if gene_min <= len(gene) <= gene_max:
-            return gene
+def find_flank_matches(seq: str, flank: str, min_ratio: int) -> List[tuple[int, int, int]]:
+    """Find fixed-width windows of seq whose fuzzy similarity to flank meets min_ratio.
+
+    A literal exact-match search fails the whole read on a single base error inside the
+    flank itself, which is the dominant error mode on Nanopore reads (indels, not just
+    substitutions). Scoring every offset against a Levenshtein-ratio threshold tolerates
+    substitutions directly, and tolerates indels immediately before/after the flank because
+    the correct offset is still tried as the window slides.
+    """
+    flank_len = len(flank)
+    if flank_len == 0 or len(seq) < flank_len:
+        return []
+    matches = []
+    for i in range(len(seq) - flank_len + 1):
+        ratio = fuzz.ratio(seq[i : i + flank_len], flank)
+        if ratio >= min_ratio:
+            matches.append((i, i + flank_len, ratio))
+    return matches
+
+
+def locate_gene_span(
+    seq: str,
+    gene_start: str,
+    gene_end: str,
+    gene_min: int,
+    gene_max: int,
+    min_ratio: int = DEFAULT_FLANK_MIN_RATIO,
+) -> Optional[tuple[int, int, bool]]:
+    """Find the (gene_span_end_of_start_flank, gene_span_start_of_end_flank, is_reverse) for seq."""
+    for is_reverse, candidate in ((False, seq), (True, reverse_complement(seq))):
+        start_matches = find_flank_matches(candidate, gene_start, min_ratio)
+        if not start_matches:
+            continue
+        end_matches = find_flank_matches(candidate, gene_end, min_ratio)
+        if not end_matches:
+            continue
+        start_matches.sort(key=lambda m: -m[2])
+        end_matches.sort(key=lambda m: -m[2])
+        for _, s_end, _ in start_matches[:5]:
+            for e_start, _, _ in end_matches[:5]:
+                if e_start <= s_end:
+                    continue
+                gene = candidate[s_end:e_start]
+                if gene_min <= len(gene) <= gene_max:
+                    return s_end, e_start, is_reverse
     return None
 
 
-def process_fastq(file_path: Path, pattern: re.Pattern, gene_min: int, gene_max: int) -> Dict[str, str]:
-    gene_reads: Dict[str, str] = {}
+def extract_gene(
+    seq: str,
+    gene_start: str,
+    gene_end: str,
+    gene_min: int,
+    gene_max: int,
+    min_ratio: int = DEFAULT_FLANK_MIN_RATIO,
+) -> Optional[str]:
+    span = locate_gene_span(seq, gene_start, gene_end, gene_min, gene_max, min_ratio)
+    if span is None:
+        return None
+    s_end, e_start, is_reverse = span
+    candidate = reverse_complement(seq) if is_reverse else seq
+    return candidate[s_end:e_start]
+
+
+def extract_gene_and_quality(
+    seq: str,
+    qual: str,
+    gene_start: str,
+    gene_end: str,
+    gene_min: int,
+    gene_max: int,
+    min_ratio: int = DEFAULT_FLANK_MIN_RATIO,
+) -> Optional[tuple[str, str]]:
+    span = locate_gene_span(seq, gene_start, gene_end, gene_min, gene_max, min_ratio)
+    if span is None:
+        return None
+    s_end, e_start, is_reverse = span
+    candidate_seq = reverse_complement(seq) if is_reverse else seq
+    candidate_qual = qual[::-1] if is_reverse else qual
+    return candidate_seq[s_end:e_start], candidate_qual[s_end:e_start]
+
+
+def process_fastq(
+    file_path: Path,
+    gene_start: str,
+    gene_end: str,
+    gene_min: int,
+    gene_max: int,
+    min_ratio: int = DEFAULT_FLANK_MIN_RATIO,
+) -> Dict[str, tuple[str, str]]:
+    gene_reads: Dict[str, tuple[str, str]] = {}
 
     # Count total reads for progress bar
     total_reads = 0
@@ -70,18 +143,33 @@ def process_fastq(file_path: Path, pattern: re.Pattern, gene_min: int, gene_max:
                 break
             seq = handle.readline().strip()
             handle.readline()  # '+'
-            handle.readline()  # quality
-            gene = extract_gene(seq, pattern, gene_min, gene_max)
-            if gene:
+            qual = handle.readline().strip()
+            result = extract_gene_and_quality(seq, qual, gene_start, gene_end, gene_min, gene_max, min_ratio)
+            if result:
                 read_id = header.strip()[1:]
-                gene_reads[read_id] = gene
+                gene_reads[read_id] = result
     return gene_reads
 
 
-def align_to_reference(gene_seqs: Dict[str, str], reference: str) -> tuple[str, Dict[str, str]]:
+def project_quality_onto_alignment(aligned_seq: str, qual: str) -> str:
+    """Re-insert gap placeholders into qual so it stays index-aligned with aligned_seq."""
+    chars = []
+    qi = 0
+    for base in aligned_seq:
+        if base == "-":
+            chars.append(chr(33))  # Phred Q0 placeholder for alignment gaps
+        else:
+            chars.append(qual[qi])
+            qi += 1
+    return "".join(chars)
+
+
+def align_to_reference(
+    gene_reads: Dict[str, tuple[str, str]], reference: str
+) -> tuple[str, Dict[str, str], Dict[str, str]]:
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".fasta") as tmp_in:
         SeqIO.write(SeqRecord(Seq(reference), id="REF", description=""), tmp_in, "fasta")
-        for rid, seq in gene_seqs.items():
+        for rid, (seq, _qual) in gene_reads.items():
             SeqIO.write(SeqRecord(Seq(seq), id=rid, description=""), tmp_in, "fasta")
         tmp_in_path = tmp_in.name
 
@@ -118,10 +206,20 @@ def align_to_reference(gene_seqs: Dict[str, str], reference: str) -> tuple[str, 
     if aligned_ref is None:
         raise RuntimeError("Reference sequence missing from alignment output.")
 
-    return aligned_ref, aligned_reads
+    aligned_quals = {
+        rid: project_quality_onto_alignment(aligned_seq, gene_reads[rid][1])
+        for rid, aligned_seq in aligned_reads.items()
+    }
+
+    return aligned_ref, aligned_reads, aligned_quals
 
 
-def identify_substitutions(ref: str, aligned_reads: Dict[str, str]) -> Dict[str, List[str]]:
+def identify_substitutions(
+    ref: str,
+    aligned_reads: Dict[str, str],
+    aligned_quals: Optional[Dict[str, str]] = None,
+    min_base_qual: int = 0,
+) -> Dict[str, List[str]]:
     subs_by_read: Dict[str, List[str]] = defaultdict(list)
 
     aln2ref: Dict[int, Optional[int]] = {}
@@ -143,6 +241,7 @@ def identify_substitutions(ref: str, aligned_reads: Dict[str, str]) -> Dict[str,
 
     codon_count = len(ref_clean_seq) // 3
     for read_id, seq in aligned_reads.items():
+        quals = aligned_quals.get(read_id) if aligned_quals else None
         for codon_i in range(codon_count):
             start_r = codon_i * 3
             codon_ref = ref_clean_seq[start_r : start_r + 3]
@@ -157,6 +256,9 @@ def identify_substitutions(ref: str, aligned_reads: Dict[str, str]) -> Dict[str,
                     break
                 base_q = seq[aln_idx]
                 if base_q == "-":
+                    valid = False
+                    break
+                if min_base_qual > 0 and quals is not None and (ord(quals[aln_idx]) - 33) < min_base_qual:
                     valid = False
                     break
                 codon_read.append(base_q)
@@ -242,6 +344,8 @@ def run_mutation_caller(
     fastq_files: Sequence[Path],
     output_dir: Path,
     threshold: int,
+    min_flank_ratio: int = DEFAULT_FLANK_MIN_RATIO,
+    min_base_qual: int = 0,
     log_path: Optional[Path] = None,
     logger: Optional[logging.Logger] = None,
 ) -> List[Dict[str, Path]]:
@@ -269,15 +373,12 @@ def run_mutation_caller(
         if not fastq_files:
             raise ValueError("No FASTQ files provided.")
 
-        pattern, gene_min, gene_max = build_flank_pattern(flanks_csv)
+        gene_start, gene_end, gene_min, gene_max = parse_flank_spec(flanks_csv)
         template_record = next(SeqIO.parse(str(template_fasta), "fasta"))
         full_ref = str(template_record.seq)
         logger.info("Loaded template sequence of length %s.", len(full_ref))
 
-        df = pd.read_csv(flanks_csv)
-        gene_start = df.loc[0, "gene_flanks"]
-        gene_end = df.loc[1, "gene_flanks"]
-        if full_ref.startswith(gene_start) and full_ref.endswith(gene_end):
+        if full_ref.upper().startswith(gene_start) and full_ref.upper().endswith(gene_end):
             reference = full_ref[len(gene_start) : len(full_ref) - len(gene_end)]
             logger.info("Trimmed flanking regions from template.")
         else:
@@ -294,13 +395,13 @@ def run_mutation_caller(
             sample_dir.mkdir(parents=True, exist_ok=True)
 
             logger.info("Processing sample %s", sample_base)
-            gene_reads = process_fastq(fastq, pattern, gene_min, gene_max)
+            gene_reads = process_fastq(fastq, gene_start, gene_end, gene_min, gene_max, min_flank_ratio)
             if not gene_reads:
                 logger.warning("No valid gene reads for %s; skipping.", sample_base)
                 continue
 
-            aligned_ref, aligned_reads = align_to_reference(gene_reads, reference)
-            substitutions = identify_substitutions(aligned_ref, aligned_reads)
+            aligned_ref, aligned_reads, aligned_quals = align_to_reference(gene_reads, reference)
+            substitutions = identify_substitutions(aligned_ref, aligned_reads, aligned_quals, min_base_qual)
             subs_aa = {
                 rid: [item.split()[1][1:-1] for item in items if "(" in item and item.endswith(")")]
                 for rid, items in substitutions.items()
@@ -421,6 +522,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Minimum AA substitution count to include in the frequent-substitution report (default: 10).",
     )
+    parser.add_argument(
+        "--min-flank-ratio",
+        type=int,
+        default=DEFAULT_FLANK_MIN_RATIO,
+        help="Minimum fuzzy match ratio (0-100) for flank detection during read extraction (default: 80).",
+    )
+    parser.add_argument(
+        "--min-base-qual",
+        type=int,
+        default=0,
+        help=(
+            "Minimum per-base Phred quality score required at every position of a codon "
+            "for a substitution call at that codon (0 disables filtering, default: 0)."
+        ),
+    )
     parser.add_argument("--log-path", default=None, type=Path, help="Optional log file path.")
     return parser
 
@@ -435,6 +551,8 @@ def main(argv: Optional[Sequence[str]] = None):
         fastq_files=fastq_files,
         output_dir=args.output_dir,
         threshold=args.threshold,
+        min_flank_ratio=args.min_flank_ratio,
+        min_base_qual=args.min_base_qual,
         log_path=args.log_path,
     )
 

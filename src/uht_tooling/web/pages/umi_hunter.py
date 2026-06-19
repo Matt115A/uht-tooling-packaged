@@ -29,6 +29,10 @@ async def render() -> None:
         "Detect UMI barcodes, extract paired gene inserts, cluster reads by UMI "
         "identity, and emit consensus sequences with abundance tables.",
     ):
+        ui.image("/uht-static/animations/umi_hunter.gif").style(
+            "width: 100%; border-radius: 12px; border: 1px solid var(--border);"
+            " box-shadow: var(--shadow-md); margin-bottom: 8px; display: block;"
+        )
         with ui.expansion("What This Tool Does", icon="info").classes("w-full").props("default-opened"):
             ui.markdown(
                 """

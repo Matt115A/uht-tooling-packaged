@@ -3,7 +3,6 @@ import csv
 import gzip
 import logging
 import os
-import re
 import subprocess
 import tempfile
 from collections import Counter
@@ -15,7 +14,10 @@ from Bio import AlignIO, SeqIO
 from Bio.Align.Applications import MafftCommandline
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+from fuzzywuzzy import fuzz
 from tqdm import tqdm
+
+DEFAULT_FLANK_MIN_RATIO = 80
 
 
 def reverse_complement(seq: str) -> str:
@@ -25,47 +27,105 @@ def reverse_complement(seq: str) -> str:
 def load_flank_config(config_csv: Path) -> dict:
     df = pd.read_csv(config_csv)
     return {
-        "umi_start": df.loc[0, "umi_flanks"],
-        "umi_end": df.loc[1, "umi_flanks"],
+        "umi_start": str(df.loc[0, "umi_flanks"]).upper(),
+        "umi_end": str(df.loc[1, "umi_flanks"]).upper(),
         "umi_min": int(df.loc[0, "umi_min_max"]),
         "umi_max": int(df.loc[1, "umi_min_max"]),
-        "gene_start": df.loc[0, "gene_flanks"],
-        "gene_end": df.loc[1, "gene_flanks"],
+        "gene_start": str(df.loc[0, "gene_flanks"]).upper(),
+        "gene_end": str(df.loc[1, "gene_flanks"]).upper(),
     }
 
 
-def build_patterns(cfg: dict) -> tuple[re.Pattern, re.Pattern]:
-    pattern_umi = re.compile(
-        rf"{cfg['umi_start']}([ACGT]{{{cfg['umi_min']},{cfg['umi_max']}}}){cfg['umi_end']}",
-        re.IGNORECASE,
-    )
-    pattern_gene = re.compile(rf"{cfg['gene_start']}(.*?){cfg['gene_end']}", re.IGNORECASE)
-    return pattern_umi, pattern_gene
+def find_flank_matches(seq: str, flank: str, min_ratio: int) -> List[Tuple[int, int, int]]:
+    """Find fixed-width windows of seq whose fuzzy similarity to flank meets min_ratio.
+
+    A literal exact-match search fails the whole read on a single base error inside the
+    flank itself, which is the dominant error mode on Nanopore reads (indels, not just
+    substitutions). Scoring every offset against a Levenshtein-ratio threshold tolerates
+    substitutions directly, and tolerates indels immediately before/after the flank because
+    the correct offset is still tried as the window slides.
+    """
+    flank_len = len(flank)
+    if flank_len == 0 or len(seq) < flank_len:
+        return []
+    matches = []
+    for i in range(len(seq) - flank_len + 1):
+        ratio = fuzz.ratio(seq[i : i + flank_len], flank)
+        if ratio >= min_ratio:
+            matches.append((i, i + flank_len, ratio))
+    return matches
+
+
+def extract_bounded_region(
+    seq: str,
+    start_flank: str,
+    end_flank: str,
+    region_min: int,
+    region_max: int,
+    min_ratio: int,
+) -> Optional[str]:
+    start_matches = find_flank_matches(seq, start_flank, min_ratio)
+    if not start_matches:
+        return None
+    end_matches = find_flank_matches(seq, end_flank, min_ratio)
+    if not end_matches:
+        return None
+    start_matches.sort(key=lambda m: -m[2])
+    end_matches.sort(key=lambda m: -m[2])
+    for _, s_end, _ in start_matches[:5]:
+        for e_start, _, _ in end_matches[:5]:
+            if e_start <= s_end:
+                continue
+            region = seq[s_end:e_start]
+            if region_min <= len(region) <= region_max:
+                return region
+    return None
+
+
+def extract_unbounded_region(
+    seq: str,
+    start_flank: str,
+    end_flank: str,
+    min_ratio: int,
+) -> Optional[str]:
+    start_matches = find_flank_matches(seq, start_flank, min_ratio)
+    if not start_matches:
+        return None
+    end_matches = find_flank_matches(seq, end_flank, min_ratio)
+    if not end_matches:
+        return None
+    start_matches.sort(key=lambda m: -m[2])
+    for _, s_end, _ in start_matches[:5]:
+        after = [e_start for e_start, _, _ in end_matches if e_start > s_end]
+        if after:
+            return seq[s_end : min(after)]
+    return None
 
 
 def extract_read_info(
     seq: str,
-    pattern_umi: re.Pattern,
-    pattern_gene: re.Pattern,
+    cfg: dict,
+    min_ratio: int,
     logger: logging.Logger,
-) -> tuple[Optional[str], Optional[str]]:
-    umi_match = pattern_umi.search(seq)
-    gene_match = pattern_gene.search(seq)
-    if umi_match and gene_match:
-        return umi_match.group(1), gene_match.group(1)
-    rev_seq = reverse_complement(seq)
-    umi_match = pattern_umi.search(rev_seq)
-    gene_match = pattern_gene.search(rev_seq)
-    if umi_match and gene_match:
-        return umi_match.group(1), gene_match.group(1)
+) -> Tuple[Optional[str], Optional[str]]:
+    for candidate in (seq, reverse_complement(seq)):
+        umi = extract_bounded_region(
+            candidate, cfg["umi_start"], cfg["umi_end"], cfg["umi_min"], cfg["umi_max"], min_ratio
+        )
+        if umi is None:
+            continue
+        gene = extract_unbounded_region(candidate, cfg["gene_start"], cfg["gene_end"], min_ratio)
+        if gene is None:
+            continue
+        return umi, gene
     logger.debug("Failed to extract UMI/gene from read")
     return None, None
 
 
 def process_fastq(
     file_path: Path,
-    pattern_umi: re.Pattern,
-    pattern_gene: re.Pattern,
+    cfg: dict,
+    min_ratio: int,
     logger: logging.Logger,
 ) -> tuple[int, Dict[str, List[str]]]:
     # Count total reads for progress bar
@@ -88,7 +148,7 @@ def process_fastq(
             handle.readline()
             read_count += 1
 
-            umi, gene = extract_read_info(seq, pattern_umi, pattern_gene, logger)
+            umi, gene = extract_read_info(seq, cfg, min_ratio, logger)
             if umi and gene:
                 umi_info.setdefault(umi, []).append(gene)
                 extracted += 1
@@ -270,6 +330,7 @@ def run_umi_hunter(
     umi_identity_threshold: float = 0.9,
     consensus_mutation_threshold: float = 0.7,
     min_cluster_size: int = 1,
+    min_flank_ratio: int = DEFAULT_FLANK_MIN_RATIO,
     log_path: Optional[Path] = None,
     logger: Optional[logging.Logger] = None,
 ) -> List[Dict[str, Path]]:
@@ -301,7 +362,6 @@ def run_umi_hunter(
             raise ValueError("Minimum cluster size must be at least 1.")
 
         cfg = load_flank_config(config_csv)
-        pattern_umi, pattern_gene = build_patterns(cfg)
         reference_record = next(SeqIO.parse(str(template_fasta), "fasta"))
 
         results: List[Dict[str, Path]] = []
@@ -314,7 +374,7 @@ def run_umi_hunter(
             sample_dir = output_dir / sample_base
             sample_dir.mkdir(parents=True, exist_ok=True)
 
-            read_count, umi_info = process_fastq(fastq, pattern_umi, pattern_gene, logger)
+            read_count, umi_info = process_fastq(fastq, cfg, min_flank_ratio, logger)
             if not umi_info:
                 logger.warning("No UMIs extracted for %s; skipping.", fastq)
                 continue
@@ -409,6 +469,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.7,
         help="Consensus mutation threshold for MAFFT-derived consensus (default: 0.7).",
     )
+    parser.add_argument(
+        "--min-flank-ratio",
+        type=int,
+        default=DEFAULT_FLANK_MIN_RATIO,
+        help="Minimum fuzzy match ratio (0-100) for flank detection during read extraction (default: 80).",
+    )
     parser.add_argument("--log-path", default=None, type=Path, help="Optional log file path.")
     return parser
 
@@ -424,6 +490,7 @@ def main(argv: Optional[Sequence[str]] = None):
         output_dir=args.output_dir,
         umi_identity_threshold=args.umi_identity_threshold,
         consensus_mutation_threshold=args.consensus_mutation_threshold,
+        min_flank_ratio=args.min_flank_ratio,
         log_path=args.log_path,
     )
 

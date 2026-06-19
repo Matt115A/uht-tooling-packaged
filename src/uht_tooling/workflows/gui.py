@@ -34,6 +34,7 @@ from uht_tooling.workflows.nextera_designer import run_nextera_primer_design
 from uht_tooling.workflows.profile_inserts import run_profile_inserts
 from uht_tooling.workflows.ssm_profiler import parse_scheme_map, run_ssm_profiler
 from uht_tooling.workflows.umi_hunter import run_umi_hunter
+from uht_tooling.workflows.enrich_monitor import run_enrich_monitor
 
 _LOGGER = logging.getLogger("uht_tooling.gui")
 
@@ -1340,6 +1341,81 @@ def launch_gui(
         share=share,
         show_error=True,
     )
+
+
+def run_gui_enrich_monitor(
+    fastq_paths: List[str],
+    reference_content: str,
+    target_id: str,
+    background_id: str,
+    baseline_sample: str,
+    n_bootstrap: int = 2000,
+) -> Tuple[str, Optional[str]]:
+    """GUI adapter for enrich-monitor."""
+    work_dir: Optional[Path] = None
+    output_dir: Optional[Path] = None
+    try:
+        ref_text = (reference_content or "").strip()
+        if not ref_text:
+            return "⚠️ Error: Reference FASTA is required.", None
+        if not fastq_paths:
+            return "⚠️ Error: At least one FASTQ file is required.", None
+        baseline_sample = (baseline_sample or "").strip()
+        if not baseline_sample:
+            return "⚠️ Error: Baseline sample name is required.", None
+
+        work_dir = Path(tempfile.mkdtemp(prefix="uht_gui_enrich_work_"))
+        output_dir = Path(tempfile.mkdtemp(prefix="uht_gui_enrich_out_"))
+
+        ref_fasta = work_dir / "reference.fasta"
+        if not ref_text.lstrip().startswith(">"):
+            return "⚠️ Error: Reference input does not look like a FASTA (must start with '>').", None
+        ref_fasta.write_text(ref_text.rstrip() + "\n")
+
+        fastq_file_paths = [Path(p) for p in fastq_paths if p]
+
+        results = run_enrich_monitor(
+            reference_fasta=ref_fasta,
+            fastq_paths=fastq_file_paths,
+            baseline_sample=baseline_sample,
+            output_dir=output_dir,
+            target_id=target_id.strip() or None,
+            background_id=background_id.strip() or None,
+            n_bootstrap=int(n_bootstrap),
+        )
+
+        import csv as _csv
+        with open(results["enrichment_stats"]) as f:
+            rows = list(_csv.DictReader(f, delimiter="\t"))
+
+        summary_parts = [
+            "### Enrichment Results\n",
+            f"**Target**: {results['target_id']}  \n"
+            f"**Background**: {results['background_id']}  \n"
+            f"**Baseline sample**: {results['baseline_sample']}\n\n",
+            "| Sample | Target reads | Bg reads | Fraction | OR vs baseline | p-value | Baret η | Zinchenko η' |",
+            "|--------|-------------|----------|----------|---------------|---------|---------|-------------|",
+        ]
+        for row in rows:
+            flag = " *(baseline)*" if row.get("is_baseline", "False").lower() == "true" else ""
+            summary_parts.append(
+                f"| {row['sample']}{flag} "
+                f"| {row[results['target_id']]} "
+                f"| {row[results['background_id']]} "
+                f"| {float(row['target_fraction']):.3f} ({row['target_frac_CI']}) "
+                f"| {row['odds_ratio']} ({row['OR_CI_95pct']}) "
+                f"| {row['fisher_p']} "
+                f"| {row['baret_eta']} ({row['baret_eta_CI_95pct']}) "
+                f"| {row['zinchenko_eta_prime']} ({row['zinchenko_eta_prime_CI_95pct']}) |"
+            )
+        summary = "\n".join(summary_parts)
+        archive = _zip_paths([output_dir], "enrich_monitor")
+        return summary, str(archive)
+    except Exception as exc:
+        _LOGGER.exception("Enrich monitor GUI failure")
+        return f"⚠️ Error: {exc}", None
+    finally:
+        _clean_temp_path(work_dir)
 
 
 def main() -> None:  # pragma: no cover - entry point wrapper

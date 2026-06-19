@@ -37,6 +37,10 @@ from uht_tooling.workflows.ssm_profiler import (
     parse_scheme_map,
     run_ssm_profiler,
 )
+from uht_tooling.workflows.enrich_monitor import (
+    expand_fastq_inputs as expand_fastq_inputs_enrich,
+    run_enrich_monitor,
+)
 from uht_tooling.web import launch_web_gui
 
 app = typer.Typer(help="Command-line interface for the uht-tooling package.")
@@ -502,6 +506,25 @@ def mutation_caller_command(
         min=1,
         help="Minimum AA substitution count to include in the frequent-substitution report.",
     ),
+    min_flank_ratio: int = typer.Option(
+        80,
+        "--min-flank-ratio",
+        "-r",
+        min=0,
+        max=100,
+        help="Minimum fuzzy match ratio (0-100) for flank detection during read extraction.",
+    ),
+    min_base_qual: int = typer.Option(
+        0,
+        "--min-base-qual",
+        "-Q",
+        min=0,
+        max=93,
+        help=(
+            "Minimum per-base Phred quality score required at every position of a codon "
+            "for a substitution call at that codon (0 disables filtering)."
+        ),
+    ),
     log_path: Optional[Path] = typer.Option(
         None,
         "--log-path",
@@ -522,6 +545,12 @@ def mutation_caller_command(
     # Apply config defaults
     config = ctx.obj.get("config", {}) if ctx.obj else {}
     threshold = get_option(config, "threshold", threshold, default=10, workflow="mutation_caller")
+    min_flank_ratio = get_option(
+        config, "min_flank_ratio", min_flank_ratio, default=80, workflow="mutation_caller"
+    )
+    min_base_qual = get_option(
+        config, "min_base_qual", min_base_qual, default=0, workflow="mutation_caller"
+    )
 
     fastq_files = expand_fastq_inputs_mutation(fastq)
     results = run_mutation_caller(
@@ -530,6 +559,8 @@ def mutation_caller_command(
         fastq_files=fastq_files,
         output_dir=output_dir,
         threshold=threshold,
+        min_flank_ratio=min_flank_ratio,
+        min_base_qual=min_base_qual,
         log_path=log_path,
     )
     if not results:
@@ -596,6 +627,14 @@ def umi_hunter_command(
         min=1,
         help="Minimum number of reads required in a UMI cluster before a consensus is generated.",
     ),
+    min_flank_ratio: int = typer.Option(
+        80,
+        "--min-flank-ratio",
+        "-r",
+        min=0,
+        max=100,
+        help="Minimum fuzzy match ratio (0-100) for flank detection during read extraction.",
+    ),
     log_path: Optional[Path] = typer.Option(
         None,
         "--log-path",
@@ -624,6 +663,9 @@ def umi_hunter_command(
     min_cluster_size = get_option(
         config, "min_cluster_size", min_cluster_size, default=1, workflow="umi_hunter"
     )
+    min_flank_ratio = get_option(
+        config, "min_flank_ratio", min_flank_ratio, default=80, workflow="umi_hunter"
+    )
 
     fastq_files = expand_fastq_inputs_umi(fastq)
     results = run_umi_hunter(
@@ -634,6 +676,7 @@ def umi_hunter_command(
         umi_identity_threshold=umi_identity_threshold,
         consensus_mutation_threshold=consensus_mutation_threshold,
         min_cluster_size=min_cluster_size,
+        min_flank_ratio=min_flank_ratio,
         log_path=log_path,
     )
     if not results:
@@ -781,6 +824,17 @@ def ssm_profiler_command(
             "Must be inside a workspace containing a '.uht_tooling_workspace' sentinel file."
         ),
     ),
+    min_base_qual: int = typer.Option(
+        0,
+        "--min-base-qual",
+        "-Q",
+        min=0,
+        max=93,
+        help=(
+            "Minimum per-base Phred quality score required at every position of a target "
+            "codon for that read to count toward the codon read-out (0 disables filtering)."
+        ),
+    ),
 ):
     """Quantify target-site amino-acid composition in SSM libraries."""
     try:
@@ -788,6 +842,9 @@ def ssm_profiler_command(
     except ToolNotFoundError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
+
+    config = ctx.obj.get("config", {}) if ctx.obj else {}
+    min_base_qual = get_option(config, "min_base_qual", min_base_qual, default=0, workflow="ssm_profiler")
 
     fastq_files = expand_fastq_inputs_ssm(fastq)
     try:
@@ -804,6 +861,7 @@ def ssm_profiler_command(
         target_sites=target_site,
         scheme_map=scheme_map,
         work_dir=work_dir,
+        min_base_qual=min_base_qual,
     )
     samples = results.get("samples", [])
     if not samples:
@@ -871,6 +929,128 @@ def profile_inserts_command(
         typer.echo("Profile inserts outputs:")
         for entry in results:
             typer.echo(f"  Sample {entry['sample']}: {entry['directory']}")
+
+
+@app.command(
+    "enrich-monitor",
+    help="Quantify variant enrichment from Nanopore long-read data.",
+)
+def enrich_monitor_command(
+    ctx: typer.Context,
+    reference_fasta: Path = typer.Option(
+        ...,
+        "--reference-fasta",
+        "-R",
+        exists=True,
+        readable=True,
+        help=(
+            "Multi-sequence FASTA defining all variants to count against. "
+            "Must contain at least two records."
+        ),
+    ),
+    fastq: list[str] = typer.Option(
+        ...,
+        "--fastq",
+        "-q",
+        help=(
+            "One or more FASTQ(.gz) paths or glob patterns "
+            "(provide multiple --fastq options as needed)."
+        ),
+    ),
+    baseline_sample: str = typer.Option(
+        ...,
+        "--baseline-sample",
+        "-b",
+        help=(
+            "Sample name of the unselected / input-pool control. "
+            "Must match the FASTQ file stem, e.g. 'control' for 'control.fastq.gz'."
+        ),
+    ),
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        "-o",
+        dir_okay=True,
+        writable=True,
+        help=(
+            "Directory for results. Must be inside a workspace containing "
+            "a '.uht_tooling_workspace' sentinel file."
+        ),
+    ),
+    target_id: Optional[str] = typer.Option(
+        None,
+        "--target-id",
+        "-t",
+        help=(
+            "FASTA record ID of the target (positive-control) sequence. "
+            "Defaults to the first record in the reference FASTA."
+        ),
+    ),
+    background_id: Optional[str] = typer.Option(
+        None,
+        "--background-id",
+        "-n",
+        help=(
+            "FASTA record ID of the background (negative-control) sequence. "
+            "Defaults to the second record when the reference contains exactly two records."
+        ),
+    ),
+    work_dir: Optional[Path] = typer.Option(
+        None,
+        "--work-dir",
+        "-w",
+        dir_okay=True,
+        writable=True,
+        help="Scratch directory for intermediate alignment files (defaults to output-dir/tmp).",
+    ),
+    log_path: Optional[Path] = typer.Option(
+        None,
+        "--log-path",
+        "-l",
+        dir_okay=False,
+        writable=True,
+        help="Optional path to write a dedicated log file.",
+    ),
+    n_bootstrap: int = typer.Option(
+        2000,
+        "--n-bootstrap",
+        "-B",
+        min=100,
+        help=(
+            "Number of bootstrap resampling iterations for Baret η and Zinchenko η' "
+            "confidence intervals (default 2000)."
+        ),
+    ),
+):
+    """Quantify variant enrichment from Nanopore long-read sequencing data."""
+    try:
+        validate_workflow_tools("enrich_monitor")
+    except ToolNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    fastq_files = expand_fastq_inputs_enrich(fastq)
+    try:
+        results = run_enrich_monitor(
+            reference_fasta=reference_fasta,
+            fastq_paths=fastq_files,
+            baseline_sample=baseline_sample,
+            output_dir=output_dir,
+            target_id=target_id,
+            background_id=background_id,
+            work_dir=work_dir,
+            log_path=log_path,
+            n_bootstrap=n_bootstrap,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Enrichment stats: {results['enrichment_stats']}")
+    typer.echo(f"Abundance table:  {results['abundance_table']}")
+    typer.echo(f"Summary figure:   {results['summary_figure']}")
+    for entry in results["samples"]:
+        typer.echo(f"  Sample {entry['sample']}: {entry['directory']}")
 
 
 @app.command("gui", help="Launch the graphical interface.")

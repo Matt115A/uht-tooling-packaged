@@ -113,6 +113,8 @@ uht-tooling design-slim -g gene.fa -c ctx.fa -m mut.csv -o out/
 | `--template-fasta` | `-t` | mutation-caller, umi-hunter |
 | `--fastq` | `-q` | 5 commands |
 | `--threshold` | `-T` | mutation-caller |
+| `--min-flank-ratio` | `-r` | mutation-caller, umi-hunter |
+| `--min-base-qual` | `-Q` | mutation-caller, ssm-profiler |
 | `--config-csv` | `-C` | umi-hunter |
 | `--binding-csv` | `-b` | nextera-primers |
 | `--probes-csv` | `-P` | profile-inserts |
@@ -450,6 +452,10 @@ If mutations fall within overlapping primer windows, design sequential reactions
 
 Co-occurrence matrices are experimental and are not yet to be relied on.
 
+Flank detection uses fuzzy (Levenshtein-ratio) matching rather than a literal exact-match search, so reads with a sequencing error inside the flank itself are still recovered. Adjust strictness via `--min-flank-ratio` (0-100, default 80) — lower values recover more reads but raise the risk of matching the wrong location.
+
+By default every aligned base counts toward a codon's substitution call regardless of its Phred quality score. Pass `--min-base-qual` (default 0, disabled) to require every base of a codon to meet a minimum Phred score before a substitution at that codon is reported for a given read.
+
 ### UMI Hunter
 
 - Inputs: `data/umi_hunter/template.fasta`, `data/umi_hunter/umi_hunter.csv`, and FASTQ reads.
@@ -461,10 +467,11 @@ Co-occurrence matrices are experimental and are not yet to be relied on.
     --fastq data/umi_hunter/*.fastq.gz \
     --output-dir results/umi_hunter/
   ```
-- Tunable parameters include `--umi-identity-threshold`, `--consensus-mutation-threshold`, and `--min-cluster-size`.
+- Tunable parameters include `--umi-identity-threshold`, `--consensus-mutation-threshold`, `--min-cluster-size`, and `--min-flank-ratio`.
 - `--umi-identity-threshold` (0–1) controls how similar two UMIs must be to fall into the same cluster.
 - `--consensus-mutation-threshold` (0–1) is the fraction of reads within a cluster that must agree on a base before it is written into the consensus sequence.
 - `--min-cluster-size` sets the minimum number of reads required in a cluster before a consensus is generated (smaller clusters remain listed in the raw UMI CSV but no consensus FASTA is produced).
+- Flank detection uses fuzzy (Levenshtein-ratio) matching rather than a literal exact-match search, so reads with a sequencing error inside the UMI or gene flanks are still recovered. Adjust strictness via `--min-flank-ratio` (0-100, default 80) — lower values recover more reads but raise the risk of matching the wrong location.
 
 **Outputs:** per-sample subdirectory containing:
 - `{sample}_UMI_clusters.csv` — columns `[Cluster Representative, Total Count, Members]`
@@ -583,6 +590,8 @@ The `KEY_FINDINGS.txt` file provides a plain-language summary including:
   - Observed-vs-expected AA distributions when schemes are supplied
   - Off-target mismatch rates elsewhere in the ROI, compared against plasmid background
   - A target-site mutational-load summary that only counts the specified codons
+
+By default every aligned base counts toward a target codon's read-out regardless of its Phred quality score. Single-codon amino acids (Cys, Trp under NNK) have no synonymous-codon redundancy, so a single low-quality base call at that position is read out as a false non-reference AA. Pass `--min-base-qual` (default 0, disabled) to require every base of a target codon to meet a minimum Phred score before the read counts toward that site's distribution.
 
 ---
 

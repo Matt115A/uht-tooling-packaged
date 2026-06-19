@@ -318,35 +318,75 @@ def create_multi_fasta(chunks, work_dir, out_fasta_prefix="plasmid_chunks"):
 
 def calculate_background_from_plasmid(sam_plasmid, plasmid_seq, target_start, target_length):
     """
-    Calculate background mismatch statistics from full plasmid alignment, excluding target region.
-    
-    Args:
-        sam_plasmid: Path to SAM file with full plasmid alignment
-        plasmid_seq: Full plasmid sequence
-        target_start: Start position of target region (0-based)
-        target_length: Length of target region
-    
+    Calculate background mismatch and deletion statistics from the full plasmid alignment,
+    restricted to the backbone (non-target) region.
+
     Returns:
-        tuple: (total_mismatches, total_covered_bases, contributing_reads)
+        tuple: (total_mismatches, total_covered_bases, contributing_reads, bg_del_rate)
+            bg_del_rate is the fraction of backbone reference positions that appear as
+            deletions in reads (read_pos is None).  Used to compute the indel-absorption
+            correction factor: corrected_lambda = raw_lambda / (1 - bg_del_rate)^3.
     """
-    # Initialize counters
     total_mismatches = 0
     total_covered_bases = 0
+    total_deletions = 0
     contributing_reads = 0
-    
+
     samfile = pysam.AlignmentFile(sam_plasmid, "r")
     for read in samfile.fetch():
         if read.is_unmapped or read.query_sequence is None:
             continue
-        
+
         contributed = False
 
         for read_pos, ref_pos in read.get_aligned_pairs(matches_only=False):
-            if read_pos is not None and ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
-                # Skip positions within the target region
-                if position_in_circular_interval(ref_pos, target_start, target_length, len(plasmid_seq)):
-                    continue
+            if ref_pos is None or not (0 <= ref_pos < len(plasmid_seq)):
+                continue
+            if position_in_circular_interval(ref_pos, target_start, target_length, len(plasmid_seq)):
+                continue
 
+            if read_pos is not None:
+                contributed = True
+                total_covered_bases += 1
+                if read.query_sequence[read_pos].upper() != plasmid_seq[ref_pos].upper():
+                    total_mismatches += 1
+            else:
+                # Deletion: reference position present but no read base
+                total_deletions += 1
+
+        if contributed:
+            contributing_reads += 1
+
+    samfile.close()
+
+    total_ref_positions = total_covered_bases + total_deletions
+    bg_del_rate = total_deletions / total_ref_positions if total_ref_positions > 0 else 0.0
+
+    return total_mismatches, total_covered_bases, contributing_reads, bg_del_rate
+
+def calculate_roi_stats_from_plasmid(sam_plasmid, plasmid_seq, target_start, target_length):
+    """
+    Calculate ROI mismatch statistics from the full plasmid alignment.
+
+    Mirror image of calculate_background_from_plasmid: counts mismatches at
+    positions WITHIN the target region using the same alignment file and the
+    same plasmid reference sequence, so that ROI rate and background rate share
+    identical alignment context and are directly comparable.
+    """
+    total_mismatches = 0
+    total_covered_bases = 0
+    contributing_reads = 0
+
+    samfile = pysam.AlignmentFile(sam_plasmid, "r")
+    for read in samfile.fetch():
+        if read.is_unmapped or read.query_sequence is None:
+            continue
+
+        contributed = False
+        for read_pos, ref_pos in read.get_aligned_pairs(matches_only=False):
+            if read_pos is not None and ref_pos is not None and 0 <= ref_pos < len(plasmid_seq):
+                if not position_in_circular_interval(ref_pos, target_start, target_length, len(plasmid_seq)):
+                    continue
                 contributed = True
                 total_covered_bases += 1
                 if read.query_sequence[read_pos].upper() != plasmid_seq[ref_pos].upper():
@@ -354,10 +394,10 @@ def calculate_background_from_plasmid(sam_plasmid, plasmid_seq, target_start, ta
 
         if contributed:
             contributing_reads += 1
-    
+
     samfile.close()
-    
     return total_mismatches, total_covered_bases, contributing_reads
+
 
 def calculate_rolling_mutation_rate_plasmid(sam_plasmid, plasmid_seq, window_size=20):
     """
@@ -624,19 +664,19 @@ def calculate_mutation_rate_for_quality(fastq_path, quality_threshold, work_dir,
         sam_plasmid = run_minimap2(filtered_fastq, plasmid_fasta, f"plasmid_q{quality_threshold}", work_dir)
         
         # Calculate background rate from full plasmid alignment, excluding target region
-        bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(
+        bg_mis, bg_cov, bg_reads, _bg_del_rate = calculate_background_from_plasmid(
             sam_plasmid,
             plasmid_seq,
             roi_location["start"],
             roi_location["length"],
         )
-        
+
         # Calculate hit region mutation rate
         mismatch_hit = compute_mismatch_stats_sam(sam_hit, {hit_id: hit_seq})
         hit_info = mismatch_hit[hit_id]
         hit_mis = hit_info["total_mismatches"]
         hit_cov = hit_info["total_covered_bases"]
-        
+
         # Extract Q-score statistics for both hit and background regions
         hit_qscore_stats = extract_qscores_from_sam(sam_hit)
         bg_qscore_stats = extract_qscores_from_sam(sam_plasmid)
@@ -880,26 +920,27 @@ def run_segmented_analysis(segment_files, quality_threshold, work_dir, ref_hit_f
             sam_plasmid = run_minimap2(filtered_segment, plasmid_fasta, f"plasmid_segment_{i+1}_q{quality_threshold}", work_dir)
             
             # Calculate background rate from full plasmid alignment, excluding target region
-            bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(
+            bg_mis, bg_cov, bg_reads, seg_del_rate = calculate_background_from_plasmid(
                 sam_plasmid,
                 plasmid_seq,
                 roi_location["start"],
                 roi_location["length"],
             )
-            
+
             # Calculate hit region mutation rate
             mismatch_hit = compute_mismatch_stats_sam(sam_hit, {hit_id: hit_seq})
             hit_info = mismatch_hit[hit_id]
             hit_mis = hit_info["total_mismatches"]
             hit_cov = hit_info["total_covered_bases"]
-            
-            # Calculate rates
+
+            # Calculate rates with indel-absorption correction
             hit_rate = hit_mis / hit_cov if hit_cov > 0 else 0
             bg_rate = bg_mis / bg_cov if bg_cov > 0 else 0
             net_rate = max(hit_rate - bg_rate, 0.0)
-            
+            seg_correction = 1.0 / (1.0 - seg_del_rate) ** 3 if seg_del_rate < 1.0 else 1.0
+
             # Calculate AA mutations per gene via Monte Carlo simulation
-            lambda_bp = net_rate * len(hit_seq)
+            lambda_bp = net_rate * len(hit_seq) * seg_correction
             aa_samples = simulate_aa_distribution(lambda_bp, hit_seq, n_trials=500)
             if len(aa_samples) > 1:
                 aa_mean = float(np.mean(aa_samples))
@@ -1623,24 +1664,31 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
 
     # Calculate background rate from full plasmid alignment, excluding target region
     # This avoids artificial junction mismatches from concatenated chunks
-    bg_mis, bg_cov, bg_reads = calculate_background_from_plasmid(sam_plasmid, plasmid_seq, idx, len(hit_seq))
+    bg_mis, bg_cov, bg_reads, bg_del_rate = calculate_background_from_plasmid(
+        sam_plasmid, plasmid_seq, idx, len(hit_seq)
+    )
     bg_rate  = (bg_mis / bg_cov) if bg_cov else 0.0       # raw per‐base
     bg_rate_per_kb = bg_rate * 1e3
+
+    # Indel-absorption correction factor: (1 - del_rate)^3 is the probability that a
+    # true substitution at position P is not absorbed by a deletion at P-1, P, or P+1.
+    absorption_survival = (1.0 - bg_del_rate) ** 3
+    correction_factor   = 1.0 / absorption_survival if absorption_survival > 0 else 1.0
 
     logging.info(
         f"Background (plasmid excluding target): total_mismatches={bg_mis}, "
         f"covered_bases={bg_cov}, contributing_reads={bg_reads}, "
-        f"rate_per_kb={bg_rate_per_kb:.4f}"
+        f"rate_per_kb={bg_rate_per_kb:.4f}, bg_del_rate={bg_del_rate:.4f}, "
+        f"correction_factor={correction_factor:.4f}"
     )
 
-    # Compute mismatch stats for hit (target)
     mismatch_hit = compute_mismatch_stats_sam(sam_hit, {hit_id: hit_seq})
     hit_info     = mismatch_hit[hit_id]
     hit_mis      = hit_info["total_mismatches"]
     hit_cov      = hit_info["total_covered_bases"]
     hit_reads    = hit_info["mapped_reads"]
     hit_uncovered_positions = hit_info["uncovered_positions"]
-    hit_rate     = hit_info["avg_mismatch_rate"]     # raw per‐base
+    hit_rate     = hit_info["avg_mismatch_rate"]
     hit_rate_per_kb  = hit_rate * 1e3
 
     logging.info(
@@ -1654,9 +1702,13 @@ def run_main_analysis_for_qscore(fastq_path, qscore, qscore_desc, sample_name, w
     z_stat, p_val = z_test_two_proportions(hit_mis, hit_cov, bg_mis, bg_cov)
 
     # Compute "Estimated mutations per target copy (basepairs)" (float)
+    # Apply indel-absorption correction: raw estimate is biased down by (1-del_rate)^3
+    # because a true substitution at P is silently dropped whenever a sequencing-error
+    # deletion falls at P-1, P, or P+1.  Dividing by the survival probability restores
+    # the unbiased estimate.  del_rate is measured directly from the backbone alignment.
     length_of_target = len(hit_seq)
     true_diff_rate   = hit_rate - bg_rate
-    est_mut_per_copy = max(true_diff_rate * length_of_target, 0.0)
+    est_mut_per_copy = max(true_diff_rate * length_of_target * correction_factor, 0.0)
 
     # Determine if ROI is a valid protein‐coding sequence (updated definition)
     is_protein = True

@@ -17,6 +17,7 @@ from uht_tooling.web.pages import (
     profile_inserts,
     ep_library,
     ssm_profiler,
+    enrich_monitor,
 )
 
 # Map of route suffix → (label, page builder)
@@ -45,6 +46,7 @@ _NAV_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
             ("/profile-inserts", "Profile Inserts", "insert_chart"),
             ("/ep-library", "EP Library Profile", "auto_graph"),
             ("/ssm-profiler", "SSM Profiler", "track_changes"),
+            ("/enrich-monitor", "Enrichment Monitor", "show_chart"),
         ],
     ),
 ]
@@ -191,3 +193,9 @@ def register_routes() -> None:
         with _page_wrapper("/ssm-profiler"):
             with ui.element("div").classes("apple-content-inner"):
                 await ssm_profiler.render()
+
+    @ui.page("/enrich-monitor")
+    async def page_enrich_monitor():
+        with _page_wrapper("/enrich-monitor"):
+            with ui.element("div").classes("apple-content-inner"):
+                await enrich_monitor.render()

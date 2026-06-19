@@ -98,6 +98,7 @@ WORKFLOW_TOOLS: Dict[str, List[str]] = {
     "umi_hunter": ["mafft"],
     "ep_library_profile": ["minimap2", "NanoFilt"],
     "ssm_profiler": ["minimap2"],
+    "enrich_monitor": ["minimap2"],
 }
 
 
