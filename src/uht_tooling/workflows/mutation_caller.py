@@ -167,10 +167,13 @@ def project_quality_onto_alignment(aligned_seq: str, qual: str) -> str:
 def align_to_reference(
     gene_reads: Dict[str, tuple[str, str]], reference: str
 ) -> tuple[str, Dict[str, str], Dict[str, str]]:
+    read_id_map: Dict[str, str] = {}
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".fasta") as tmp_in:
         SeqIO.write(SeqRecord(Seq(reference), id="REF", description=""), tmp_in, "fasta")
-        for rid, (seq, _qual) in gene_reads.items():
-            SeqIO.write(SeqRecord(Seq(seq), id=rid, description=""), tmp_in, "fasta")
+        for idx, (rid, (seq, _qual)) in enumerate(gene_reads.items()):
+            internal_id = f"READ_{idx}"
+            read_id_map[internal_id] = rid
+            SeqIO.write(SeqRecord(Seq(seq), id=internal_id, description=""), tmp_in, "fasta")
         tmp_in_path = tmp_in.name
 
     mafft = MafftCommandline(input=tmp_in_path)
@@ -198,7 +201,10 @@ def align_to_reference(
         if record.id == "REF":
             aligned_ref = str(record.seq)
         else:
-            aligned_reads[record.id] = str(record.seq)
+            original_id = read_id_map.get(record.id)
+            if original_id is None:
+                raise RuntimeError(f"Unexpected alignment record ID returned by MAFFT: {record.id}")
+            aligned_reads[original_id] = str(record.seq)
 
     os.remove(tmp_in_path)
     os.remove(tmp_out_path)
